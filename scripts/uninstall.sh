@@ -23,7 +23,6 @@ fi
 # Set paths
 INSTALL_DIR="/usr/local/sbin"
 SYSTEMD_DIR="/etc/systemd/system"
-LOGROTATE_DIR="/etc/logrotate.d"
 LOG_DIR="/var/log/tampering-check"
 CONFIG_DIR="/etc/tampering-check"
 
@@ -40,7 +39,6 @@ stop_services() {
 remove_files() {
     rm -f "$INSTALL_DIR/tampering-check.sh"
     rm -f "$SYSTEMD_DIR/tampering-check@.service"
-    rm -f "$LOGROTATE_DIR/tampering-check"
 }
 
 # Function: cleanup_directories

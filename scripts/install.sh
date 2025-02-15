@@ -24,7 +24,6 @@ fi
 # Set paths
 INSTALL_DIR="/usr/local/sbin"
 SYSTEMD_DIR="/etc/systemd/system"
-LOGROTATE_DIR="/etc/logrotate.d"
 LOG_DIR="/var/log/tampering-check"
 CONFIG_DIR="/etc/tampering-check"
 
@@ -53,11 +52,10 @@ create_directories() {
 }
 
 # Function: install_files
-# Installs main script, systemd service, logrotate configuration, and example config.
+# Installs main script, systemd service, and example config.
 install_files() {
     install -m 750 bin/tampering-check.sh "$INSTALL_DIR/"
     install -m 644 systemd/tampering-check@.service "$SYSTEMD_DIR/"
-    install -m 644 config/logrotate.d/tampering-check "$LOGROTATE_DIR/"
     if [ ! -f "$CONFIG_DIR/config.yml" ]; then
         install -m 640 config/config.yml.example "$CONFIG_DIR/config.yml"
     else
@@ -67,11 +65,9 @@ install_files() {
 }
 
 # Function: configure_system
-# Reloads systemd and sets up log files.
+# Reloads systemd.
 configure_system() {
     systemctl daemon-reload
-    touch "$LOG_DIR/install.log"
-    chmod 640 "$LOG_DIR/install.log"
 }
 
 # Main installation flow
