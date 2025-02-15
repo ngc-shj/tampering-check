@@ -82,7 +82,6 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
        facility: auth
      email:
        enabled: true
-       smtp_server: smtp.example.com
        recipient: "admin@example.com"   # Recipient email address
        include_info: false      # Set to true to send info-level messages via email
        aggregation_interval: 5  # Interval in seconds to aggregate email notifications
