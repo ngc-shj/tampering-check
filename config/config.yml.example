@@ -6,7 +6,6 @@ general:
 directories:
   - path: /path/to/monitor
     recursive: true
-    priority: normal
 
 notifications:
   syslog:

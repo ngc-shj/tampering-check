@@ -8,7 +8,6 @@ DEFAULT_CHECK_INTERVAL=300
 DEFAULT_HASH_ALGORITHM="sha256"   # Expect to use sha256sum
 DEFAULT_ENABLE_ALERTS=true
 DEFAULT_RECURSIVE=true
-DEFAULT_PRIORITY="normal"
 DEFAULT_SYSLOG_ENABLED=true
 DEFAULT_EMAIL_ENABLED=false
 DEFAULT_WEBHOOK_ENABLED=false
@@ -24,7 +23,15 @@ parse_config() {
     fi
     if [ -f "$CONFIG_FILE" ]; then
         local key="$1"
-        yq -r "$key" "$CONFIG_FILE" 2>/dev/null || echo ""
+        local value
+        value=$(yq -r "$key" "$CONFIG_FILE" 2>/dev/null)
+        if [ -z "$value" ]; then
+            return 1
+        else
+            echo "$value"
+        fi
+    else
+        return 1
     fi
 }
 
@@ -43,7 +50,6 @@ CHECK_INTERVAL=$(parse_config '.general.check_interval' || echo "$DEFAULT_CHECK_
 HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' || echo "$DEFAULT_HASH_ALGORITHM")
 ENABLE_ALERTS=$(parse_config '.general.enable_alerts' || echo "$DEFAULT_ENABLE_ALERTS")
 RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" || echo "$DEFAULT_RECURSIVE")
-PRIORITY=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .priority" || echo "$DEFAULT_PRIORITY")
 SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_SYSLOG_ENABLED")
 EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
 WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
@@ -55,8 +61,11 @@ if [ -z "$CHECK_INTERVAL" ] || [ "$CHECK_INTERVAL" -lt 1 ]; then
     CHECK_INTERVAL=$DEFAULT_CHECK_INTERVAL
 fi
 
+# Set the hash command based on the configuration.
+HASH_COMMAND="${HASH_ALGORITHM}sum"
+
 # Log the chosen hash algorithm for debugging purposes (optional)
-echo "Using hash algorithm: ${HASH_ALGORITHM}sum" >> /var/log/tampering-check/debug.log 2>/dev/null
+echo "Using hash algorithm: ${HASH_COMMAND}" >> /var/log/tampering-check/debug.log 2>/dev/null
 
 # Generate a service identifier based on WATCH_DIR (slashes replaced with underscores)
 SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
@@ -110,9 +119,9 @@ calculate_initial_hashes() {
     printf "[%s] info: Calculating initial hash values for %s\n" "$timestamp" "$WATCH_DIR" >> "$LOG_FILE"
     
     if [ "$RECURSIVE" = "true" ]; then
-        find "$WATCH_DIR" -type f -print0 | xargs -0 -n1 "${HASH_ALGORITHM}sum" 2>/dev/null > "$HASH_FILE"
+        find "$WATCH_DIR" -type f \( ! -name "*.swp" -a ! -name "*.swpx" \) -print0 | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
     else
-        find "$WATCH_DIR" -maxdepth 1 -type f -print0 | xargs -0 -n1 "${HASH_ALGORITHM}sum" 2>/dev/null > "$HASH_FILE"
+        find "$WATCH_DIR" -maxdepth 1 -type f \( ! -name "*.swp" -a ! -name "*.swpx" \) -print0 | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
     fi
     chmod 640 "$HASH_FILE"
 }
@@ -123,7 +132,7 @@ verify_integrity() {
     local file="$1"
     [ ! -f "$file" ] && return
     local current_hash stored_hash
-    current_hash=$("${HASH_ALGORITHM}sum" "$file" 2>/dev/null | cut -d' ' -f1)
+    current_hash=$("${HASH_COMMAND}" "$file" 2>/dev/null | cut -d' ' -f1)
     if [ -f "$HASH_FILE" ]; then
         stored_hash=$(grep -F "$file" "$HASH_FILE" 2>/dev/null | cut -d' ' -f1)
         if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
@@ -133,7 +142,7 @@ verify_integrity() {
         fi
     else
         # If no initial hash exists for the file, record it now.
-        "${HASH_ALGORITHM}sum" "$file" >> "$HASH_FILE"
+        "${HASH_COMMAND}" "$file" >> "$HASH_FILE"
     fi
 }
 
@@ -156,7 +165,11 @@ monitor_changes() {
                 ;;
             CREATE)
                 send_notification "File created: $full_path" "notice"
-                "${HASH_ALGORITHM}sum" "$full_path" >> "$HASH_FILE"
+                if [ -f "$full_path" ]; then
+                    "$HASH_COMMAND" "$full_path" >> "$HASH_FILE"
+                else
+                    send_notification "File $full_path does not exist when attempting to calculate hash" "warning"
+                fi
                 ;;
             DELETE)
                 send_notification "File deleted: $full_path" "warning"
