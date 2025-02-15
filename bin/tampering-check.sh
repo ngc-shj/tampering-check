@@ -24,7 +24,7 @@ parse_config() {
     fi
     if [ -f "$CONFIG_FILE" ]; then
         local key="$1"
-        yq "$key" "$CONFIG_FILE" 2>/dev/null || echo ""
+        yq -r "$key" "$CONFIG_FILE" 2>/dev/null || echo ""
     fi
 }
 

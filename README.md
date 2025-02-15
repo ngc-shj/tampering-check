@@ -16,9 +16,22 @@ A systemd-based file integrity monitoring system that provides real-time detecti
 
 - Linux system with systemd
 - inotify-tools package
-- yq (YAML parser)
+- [yq](https://github.com/kislyuk/yq) (for parsing configuration files)
 - mail command (for email notifications)
 - curl (for webhook notifications)
+
+**Note:**
+When you install yq using `pip install yq`, it is typically placed in `/usr/local/bin/yq`.
+If you want it to be located in `/usr/bin/yq`, you can create a symbolic link as follows:
+
+**Note:**
+yq (https://github.com/kislyuk/yq) requires jq to function.
+Make sure that jq is installed on your system (e.g., `sudo apt-get install jq` on Debian/Ubuntu).
+
+
+```bash
+sudo ln -s /usr/local/bin/yq /usr/bin/yq
+```
 
 ## Installation
 
@@ -31,10 +44,12 @@ cd tampering-check
 2. Install dependencies:
 ```bash
 # For Debian/Ubuntu
-sudo apt-get install inotify-tools yq mailutils curl
+sudo apt-get install inotify-tools jq mailutils curl
+sudo pip install yq
 
 # For RHEL/CentOS
-sudo yum install inotify-tools yq mailx curl
+sudo dnf install inotify-tools jq mailx curl
+sudo pip install yq
 ```
 
 3. Run the installation script:
