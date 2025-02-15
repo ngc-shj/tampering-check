@@ -118,11 +118,16 @@ calculate_initial_hashes() {
     # Use unified logging format for the initial message
     printf "[%s] info: Calculating initial hash values for %s\n" "$timestamp" "$WATCH_DIR" >> "$LOG_FILE"
     
+    # Common find options to exclude temporary files
+    local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*~' -print0"
+    local find_opts=""
     if [ "$RECURSIVE" = "true" ]; then
-        find "$WATCH_DIR" -type f \( ! -name "*.swp" -a ! -name "*.swpx" \) -print0 | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
+        find_opts="$common_opts"
     else
-        find "$WATCH_DIR" -maxdepth 1 -type f \( ! -name "*.swp" -a ! -name "*.swpx" \) -print0 | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
+        find_opts="-maxdepth 1 $common_opts"
     fi
+
+    find "$WATCH_DIR" $find_opts | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
     chmod 640 "$HASH_FILE"
 }
 
@@ -156,7 +161,7 @@ monitor_changes() {
     local inotify_opts="-m"
     [ "$RECURSIVE" = "true" ] && inotify_opts="$inotify_opts -r"
     
-    inotifywait $inotify_opts -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
+    inotifywait $inotify_opts --exclude '(\.swp(x)?$|~$)' -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
         local full_path="${path}${file}"
         case "$event" in
             MODIFY)
@@ -166,14 +171,21 @@ monitor_changes() {
             CREATE)
                 send_notification "File created: $full_path" "notice"
                 if [ -f "$full_path" ]; then
-                    "$HASH_COMMAND" "$full_path" >> "$HASH_FILE"
+                    # Check if an entry for the file already exists in HASH_FILE.
+                    if grep -Fq "$full_path" "$HASH_FILE"; then
+                        # Update the hash entry for the file.
+                        new_hash=$("$HASH_COMMAND" "$full_path" 2>/dev/null | cut -d' ' -f1)
+                        sed -i "\\|  $full_path$|c\\$new_hash  $full_path" "$HASH_FILE"
+                    else
+                        "$HASH_COMMAND" "$full_path" >> "$HASH_FILE"
+                    fi
                 else
                     send_notification "File $full_path does not exist when attempting to calculate hash" "warning"
                 fi
                 ;;
             DELETE)
                 send_notification "File deleted: $full_path" "warning"
-                sed -i "\\|$full_path$|d" "$HASH_FILE"
+                sed -i "\\|  $full_path$|d" "$HASH_FILE"
                 ;;
             MOVED_*)
                 send_notification "File moved: $full_path" "notice"
