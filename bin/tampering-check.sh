@@ -84,8 +84,7 @@ touch "$HASH_FILE"
 chmod 640 "$HASH_FILE"
 
 # Create a secure temporary file for email queue using mktemp
-EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
-chmod 600 "$EMAIL_QUEUE"
+EMAIL_QUEUE=$( (umask 077 && mktemp /tmp/tampering_check_email_queue.XXXXXX) )
 
 # Function: log_message
 # Outputs a log message in the specified format to stdout.
@@ -106,11 +105,14 @@ log_message() {
 # Appends the message to the email queue file.
 queue_email_notification() {
     local message="$1"
-    echo "$message" >> "$EMAIL_QUEUE"
+    {
+        flock -x 200  # Exclusive lock to prevent concurrent writes
+        echo "$message" >> "$EMAIL_QUEUE"
+    } 200>/var/lock/tampering_check_email.lock
 }
 
 # Function: send_notification
-# Sends a notification by logging a JSON message to stdout and optionally forwarding to syslog, email, or webhook.
+# Sends a notification by logging a message to stdout and optionally forwarding to syslog, email, or webhook.
 send_notification() {
     local message="$1"
     local priority="$2"
@@ -120,7 +122,6 @@ send_notification() {
     fi
     # Queue email notifications (skip info messages unless EMAIL_INCLUDE_INFO is true)
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$EMAIL_ENABLED" = "true" ] && [ -n "$EMAIL_RECIPIENT" ]; then
-        # Only send email if not info level, unless include_info is set to true in config
         if [ "$priority" != "info" ] || [ "$EMAIL_INCLUDE_INFO" = "true" ]; then
             queue_email_notification "$message"
         fi
@@ -139,13 +140,26 @@ send_notification() {
 send_queued_emails() {
     while true; do
         sleep "$EMAIL_AGGREGATION_INTERVAL"
-        if [ -s "$EMAIL_QUEUE" ]; then
-            local email_body
-            email_body=$(cat "$EMAIL_QUEUE")
-            echo "$email_body" | mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT"
-            # Clear the email queue file
-            > "$EMAIL_QUEUE"
-        fi
+
+        {
+            flock -x 200  # Ensure exclusive access to the queue
+
+            if [ -s "$EMAIL_QUEUE" ]; then
+                local tmp_queue
+                tmp_queue="${EMAIL_QUEUE}_$(date +%s).tmp"
+
+                # Safely move the queue file and create a new one
+                mv "$EMAIL_QUEUE" "$tmp_queue"
+                (umask 077 && touch "$EMAIL_QUEUE")
+
+                # Send the email
+                mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT" < "$tmp_queue"
+
+                # Cleanup temporary queue file
+                rm -f "$tmp_queue"
+            fi
+
+        } 200>/var/lock/tampering_check_email.lock
     done
 }
 
@@ -154,7 +168,7 @@ send_queued_emails() {
 calculate_initial_hashes() {
     log_message "info" "Calculating initial hash values for $WATCH_DIR"
     
-    # Find options to exclude temporary files
+    # Common find options to exclude temporary files
     local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*.swx' ! -name '*~' -print0"
     local find_opts=""
     if [ "$RECURSIVE" = "true" ]; then
@@ -178,7 +192,7 @@ verify_integrity() {
         stored_hash=$(awk -v f="$file" '$2 == f { print $1 }' "$HASH_FILE")
         if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
             send_notification "Integrity violation detected in file: $file" "alert"
-            sed -i "\\|[[:space:]]$file$|c\\$current_hash  $file" "$HASH_FILE"
+            sed -i "\\|[[:space:]]$file\$|c\\$current_hash  $file" "$HASH_FILE"
         fi
     else
         "${HASH_COMMAND}" "$file" >> "$HASH_FILE"
@@ -195,7 +209,6 @@ monitor_changes() {
     
     inotifywait $inotify_opts --exclude '(\.swp(x)?$|\.swx$|~$)' -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
         local full_path="${path}${file}"
-
         case "$event" in
             MODIFY)
                 send_notification "File modified: $full_path" "warning"
@@ -249,8 +262,15 @@ main() {
     monitor_changes
 }
 
+# Cleanup function to remove temporary email queue file at script exit.
+cleanup_temp_files() {
+    [ -n "$EMAIL_QUEUE" ] && rm -f "$EMAIL_QUEUE"
+}
+
 # Trap INT and TERM signals to send a termination notification before exiting.
 trap 'send_notification "Service terminated: $WATCH_DIR" "alert"; exit' INT TERM
+# Also trap EXIT to clean up temporary files.
+trap cleanup_temp_files EXIT
 
 main
 
