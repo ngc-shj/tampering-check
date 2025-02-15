@@ -271,7 +271,13 @@ monitor_changes() {
 periodic_verification() {
     while true; do
         sleep "$CHECK_INTERVAL"
-        if [ -f "$HASH_FILE" ]; then
+        if [ "$STORAGE_MODE" = "sqlite3" ]; then
+            # Retrieve file paths from the SQLite database and verify integrity
+            sqlite3 "$HASH_DB" "SELECT path FROM hashes;" | while read -r file; do
+                [ -f "$file" ] && verify_integrity "$file"
+            done
+        else
+            # Retrieve file paths from the text-based hash storage and verify integrity
             while IFS= read -r line; do
                 local file
                 file=$(echo "$line" | cut -d' ' -f2-)
