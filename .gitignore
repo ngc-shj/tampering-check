@@ -11,8 +11,9 @@
 .DS_Store
 Thumbs.db
 
-# Ignore generated or user-specific config file (keep only the example)
+# Ignore generated configs files and the derived systemd service file (keep only the example)
 config/config.yml
+systemd/tampering-check@.service
 
 # Optionally ignore local build or temporary directories
 tmp/

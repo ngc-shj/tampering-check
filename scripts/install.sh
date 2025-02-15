@@ -55,6 +55,16 @@ create_directories() {
 # Installs main script, systemd service, and example config.
 install_files() {
     install -m 750 bin/tampering-check.sh "$INSTALL_DIR/"
+
+    # Copy canonical service file template to the final service file
+    cp systemd/tampering-check@.service.example systemd/tampering-check@.service
+
+    # Check if /var/spool/postfix/maildrop exists; if not, remove it from ReadWritePaths in the service file.
+    if [ ! -d "/var/spool/postfix/maildrop" ]; then
+        echo "/var/spool/postfix/maildrop does not exist; removing from ReadWritePaths..."
+        sed -i 's#/var/spool/postfix/maildrop##g' systemd/tampering-check@.service
+    fi
+
     install -m 644 systemd/tampering-check@.service "$SYSTEMD_DIR/"
     if [ ! -f "$CONFIG_DIR/config.yml" ]; then
         install -m 640 config/config.yml.example "$CONFIG_DIR/config.yml"
