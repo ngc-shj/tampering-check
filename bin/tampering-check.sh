@@ -39,11 +39,8 @@ parse_config() {
     fi
 }
 
-# Normalize the target directory (remove duplicate slashes and trailing slash)
-WATCH_DIR=$(echo "$1" | sed 's#/\+#/#g' | sed 's#/$##')
-if [[ "$WATCH_DIR" != /* ]]; then
-    WATCH_DIR="/$WATCH_DIR"
-fi
+# Convert instance name (with underscores) to a proper directory path with slashes
+WATCH_DIR="/${1//_//}"
 if [ -z "$WATCH_DIR" ]; then
     echo "Error: No target directory specified" >&2
     exit 1
