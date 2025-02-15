@@ -9,7 +9,7 @@ _A systemd-based file integrity monitoring system that provides real-time detect
 - **Flexible notifications:** Supports syslog, aggregated email notifications, and webhook alerts.
 - **Aggregated email alerts:** Configurable aggregation interval to batch email notifications.
 - **Customizable logging:** Log messages are output to stdout (captured by journald) with configurable formats (JSON or plain text).
-- **Integrity hash file storage:** Only the hash file is stored in `/var/lib/tampering-check`.
+- **Integrity hash storage:** Supports `text` file or `sqlite3` database for storing integrity hashes.
 - **Multi-directory support:** Use the provided systemd service template to monitor multiple directories.
 - **YAML-based configuration:** Easily adjust parameters via `/etc/tampering-check/config.yml`.
 - **Security hardening:** Leverages systemd security features (e.g., ProtectSystem, PrivateTmp, NoNewPrivileges).
@@ -21,6 +21,7 @@ _A systemd-based file integrity monitoring system that provides real-time detect
 - [yq](https://github.com/kislyuk/yq) (requires jq; see below for installation note)
 - A mail client (e.g., mailutils on Debian/Ubuntu or mailx on RHEL/CentOS)
 - [curl](https://curl.se/) for webhook notifications
+- [sqlite3](https://www.sqlite.org/) (only required when using `sqlite3` storage mode)
 
 **Note:** When installing yq via `pip install yq`, it is typically placed in `/usr/local/bin/yq`. To have it in `/usr/bin/yq`, create a symbolic link:
 ```bash
@@ -39,12 +40,12 @@ Ensure that `jq` is installed on your system (e.g., `sudo apt-get install jq` on
 2. **Install dependencies:**
    - **Debian/Ubuntu:**
      ```bash
-     sudo apt-get install inotify-tools jq mailutils curl
+     sudo apt-get install inotify-tools jq mailutils curl sqlite3
      sudo pip install yq
      ```
    - **RHEL/CentOS:**
      ```bash
-     sudo dnf install inotify-tools jq mailx curl
+     sudo dnf install inotify-tools jq mailx curl sqlite3
      sudo pip install yq
      ```
 
@@ -68,8 +69,9 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
    ```yaml
    general:
      check_interval: 300       # Seconds between periodic integrity checks
-     hash_algorithm: sha256      # Hash algorithm to use (e.g., sha256)
-     enable_alerts: true         # Enable/disable notifications
+     storage_mode: text        # Storage mode: "text" or "sqlite3"
+     hash_algorithm: sha256    # Hash algorithm to use (e.g., sha256)
+     enable_alerts: true       # Enable/disable notifications
 
    directories:
      - path: /etc              # Directory to monitor
@@ -100,7 +102,7 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
    # Monitor the /etc directory
    sudo systemctl enable tampering-check@etc.service
    sudo systemctl start tampering-check@etc.service
-
+   
    # Monitor the /bin directory
    sudo systemctl enable tampering-check@bin.service
    sudo systemctl start tampering-check@bin.service
@@ -117,10 +119,14 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
      ```bash
      sudo journalctl -u tampering-check@etc.service
      ```
-   - **Hash file:**
-     The only file stored in `/var/lib/tampering-check` is the hash file.
+   - **Stored hash data:**
+     Depending on the `storage_mode`, hashes are stored as follows:
      ```bash
+     # If using text mode:
      sudo cat /var/lib/tampering-check/etc_hashes.txt
+     
+     # If using sqlite3 mode:
+     sudo sqlite3 /var/lib/tampering-check/etc_hashes.db "SELECT * FROM hashes;"
      ```
 
 4. **Stop monitoring:**
@@ -129,10 +135,10 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
    sudo systemctl disable tampering-check@etc.service
    ```
 
-## Hash File and Notifications
+## Hash Storage and Notifications
 
-- **Hash File:**
-  The integrity hash values for monitored files are stored in `/var/lib/tampering-check`.
+- **Hash Storage:**
+  The integrity hash values for monitored files are stored in `/var/lib/tampering-check`. Depending on `storage_mode`, this is either a text file (`*_hashes.txt`) or an SQLite database (`*_hashes.db`).
 - **Systemd journal:**
   All log messages (e.g., notifications and status updates) are sent to stdout and managed by journald.
 - **Email alerts:**
@@ -143,7 +149,7 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
 ## Security Considerations
 
 - **File Permissions:**
-  The service runs as root to monitor system directories. The hash file is created with strict permissions (typically 640).
+  The service runs as root to monitor system directories. The hash file/database is created with strict permissions (typically 640).
 - **Systemd Security:**
   The provided systemd service file includes security directives to limit the service's impact.
   **Note:** By default, the service file uses:
@@ -166,37 +172,17 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
      ```bash
      journalctl -u tampering-check@*.service
      ```
-   - Verify that `inotify-tools` is installed.
-   - Confirm that directory permissions are correctly set.
+   - Verify that `inotify-tools` and `sqlite3` (if applicable) are installed.
 
 2. **Missing notifications:**
    - Ensure configuration in `/etc/tampering-check/config.yml` is correct.
-   - Verify mail client configuration and SMTP server settings.
    - Check webhook URL accessibility if using webhook notifications.
 
 3. **High resource usage:**
    - Adjust `check_interval` in the configuration.
-   - Exclude high-churn directories if necessary.
-
-## Contributing
-
-1. Fork the repository.
-2. Create your feature branch.
-3. Run tests (e.g., `./tests/test_tampering.sh`).
-4. Commit your changes.
-5. Push to your branch.
-6. Create a Pull Request.
-
-Please follow the coding guidelines and include detailed commit messages.
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
-
-- **inotify-tools** developers
-- **systemd** team
-- **yq** and **jq** developers
-- All contributors who helped improve this project
 

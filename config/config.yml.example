@@ -1,5 +1,6 @@
 general:
   check_interval: 300
+  storage_mode: sqlite3   # "text" or "sqlite3"
   hash_algorithm: sha256
   enable_alerts: true
 

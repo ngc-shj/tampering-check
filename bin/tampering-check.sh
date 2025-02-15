@@ -5,7 +5,8 @@ set -e
 CONFIG_FILE="/etc/tampering-check/config.yml"
 
 DEFAULT_CHECK_INTERVAL=300
-DEFAULT_HASH_ALGORITHM="sha256"   # Expect to use sha256sum
+DEFAULT_STORAGE_MODE="text"       # Default to text storage
+DEFAULT_HASH_ALGORITHM="sha256"
 DEFAULT_ENABLE_ALERTS=true
 DEFAULT_RECURSIVE=true
 DEFAULT_SYSLOG_ENABLED=true
@@ -48,6 +49,7 @@ fi
 
 # Retrieve configuration values, falling back to default values if necessary
 CHECK_INTERVAL=$(parse_config '.general.check_interval' || echo "$DEFAULT_CHECK_INTERVAL")
+STORAGE_MODE=$(parse_config '.general.storage_mode' || echo "$DEFAULT_STORAGE_MODE")
 HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' || echo "$DEFAULT_HASH_ALGORITHM")
 ENABLE_ALERTS=$(parse_config '.general.enable_alerts' || echo "$DEFAULT_ENABLE_ALERTS")
 RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" || echo "$DEFAULT_RECURSIVE")
@@ -73,13 +75,16 @@ echo "Using hash algorithm: ${HASH_COMMAND}" >&2
 # Generate SERVICE_ID from the target directory (convert slashes to underscores)
 SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
 
-# Define log directory and hash file path (log output goes to stdout; hash file is used for hash management)
-LOG_DIR="/var/lib/tampering-check"
-HASH_FILE="${LOG_DIR}/${SERVICE_ID}_hashes.txt"
-
-# Create directory for hash file and set proper permissions
-touch "$HASH_FILE"
-chmod 640 "$HASH_FILE"
+# Define state directory and hash file path (hash file is used for hash management)
+STATE_DIR="/var/lib/tampering-check"
+if [ "$STORAGE_MODE" = "sqlite3" ]; then
+    HASH_DB="${STATE_DIR}/${SERVICE_ID}_hashes.db"
+    sqlite3 "$HASH_DB" "CREATE TABLE IF NOT EXISTS hashes (path TEXT PRIMARY KEY, hash TEXT NOT NULL);"
+else
+    HASH_FILE="${STATE_DIR}/${SERVICE_ID}_hashes.txt"
+    touch "$HASH_FILE"
+    chmod 640 "$HASH_FILE"
+fi
 
 # Define runtime directory and lock file path (unique per monitored directory)
 RUN_DIR="/run/tampering-check"
@@ -171,7 +176,7 @@ calculate_initial_hashes() {
     log_message "info" "Calculating initial hash values for $WATCH_DIR"
     
     # Common find options to exclude temporary files
-    local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*.swx' ! -name '*~' -print0"
+    local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*.swx' ! -name '*~'"
     local find_opts=""
     if [ "$RECURSIVE" = "true" ]; then
         find_opts="$common_opts"
@@ -179,8 +184,15 @@ calculate_initial_hashes() {
         find_opts="-maxdepth 1 $common_opts"
     fi
 
-    find "$WATCH_DIR" $find_opts | xargs -0 -n1 "${HASH_COMMAND}" 2>/dev/null > "$HASH_FILE"
-    chmod 640 "$HASH_FILE"
+    if [ "$STORAGE_MODE" = "sqlite3" ]; then
+        find "$WATCH_DIR" $find_opts -print | while read -r file; do
+            HASH=$("$HASH_COMMAND" "$file" | cut -d" " -f1)
+            sqlite3 "$HASH_DB" "INSERT OR REPLACE INTO hashes (path, hash) VALUES ('$file', '$HASH');"
+        done
+    else
+        find "$WATCH_DIR" $find_opts -print0 | xargs -0 -n1 "$HASH_COMMAND" > "$HASH_FILE"
+        chmod 640 "$HASH_FILE"
+    fi
 }
 
 # Function: verify_integrity
@@ -190,14 +202,18 @@ verify_integrity() {
     [ ! -f "$file" ] && return
     local current_hash stored_hash
     current_hash=$("${HASH_COMMAND}" "$file" 2>/dev/null | cut -d' ' -f1)
-    if [ -f "$HASH_FILE" ]; then
+    if [ "$STORAGE_MODE" = "sqlite3" ]; then
+        stored_hash=$(sqlite3 "$HASH_DB" "SELECT hash FROM hashes WHERE path = '$file';")
+        if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
+            send_notification "Integrity violation detected in file: $file" "alert"
+            sqlite3 "$HASH_DB" "UPDATE hashes SET hash = '$current_hash' WHERE path = '$file';"
+        fi
+    else
         stored_hash=$(awk -v f="$file" '$2 == f { print $1 }' "$HASH_FILE")
         if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
             send_notification "Integrity violation detected in file: $file" "alert"
             sed -i "\\|[[:space:]]$file\$|c\\$current_hash  $file" "$HASH_FILE"
         fi
-    else
-        "${HASH_COMMAND}" "$file" >> "$HASH_FILE"
     fi
 }
 
@@ -219,11 +235,16 @@ monitor_changes() {
             CREATE)
                 send_notification "File created: $full_path" "notice"
                 if [ -f "$full_path" ]; then
-                    if awk -v f="$full_path" '$2 == f { found=1 } END { exit !found }' "$HASH_FILE"; then
+                    if [ "$STORAGE_MODE" = "sqlite3" ]; then
                         new_hash=$("${HASH_COMMAND}" "$full_path" 2>/dev/null | cut -d' ' -f1)
-                        sed -i "\\|[[:space:]]$full_path\$|c\\$new_hash  $full_path" "$HASH_FILE"
+                        sqlite3 "$HASH_DB" "INSERT OR REPLACE INTO hashes (path, hash) VALUES ('$full_path', '$new_hash');"
                     else
-                        "${HASH_COMMAND}" "$full_path" >> "$HASH_FILE"
+                        if awk -v f="$full_path" '$2 == f { found=1 } END { exit !found }' "$HASH_FILE"; then
+                            new_hash=$("${HASH_COMMAND}" "$full_path" 2>/dev/null | cut -d' ' -f1)
+                            sed -i "\\|[[:space:]]$full_path\$|c\\$new_hash  $full_path" "$HASH_FILE"
+                        else
+                            "${HASH_COMMAND}" "$full_path" >> "$HASH_FILE"
+                        fi
                     fi
                 else
                     send_notification "File $full_path does not exist when attempting to calculate hash" "warning"
@@ -231,7 +252,11 @@ monitor_changes() {
                 ;;
             DELETE)
                 send_notification "File deleted: $full_path" "warning"
-                sed -i "\\|[[:space:]]$full_path\$|d" "$HASH_FILE"
+                if [ "$STORAGE_MODE" = "sqlite3" ]; then
+                    sqlite3 "$HASH_DB" "DELETE FROM hashes WHERE path = '$full_path';"
+                else
+                    sed -i "\\|[[:space:]]$full_path\$|d" "$HASH_FILE"
+                fi
                 ;;
             MOVED_*)
                 send_notification "File moved: $full_path" "notice"
