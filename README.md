@@ -74,7 +74,6 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
    directories:
      - path: /etc              # Directory to monitor
        recursive: true         # Monitor subdirectories
-       priority: high          # Alert priority for this directory
 
    notifications:
      syslog:
