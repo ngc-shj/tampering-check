@@ -10,6 +10,7 @@ DEFAULT_ENABLE_ALERTS=true
 DEFAULT_RECURSIVE=true
 DEFAULT_SYSLOG_ENABLED=true
 DEFAULT_EMAIL_ENABLED=false
+DEFAULT_EMAIL_INCLUDE_INFO=false
 DEFAULT_WEBHOOK_ENABLED=false
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_LOG_FORMAT="plain"
@@ -54,6 +55,7 @@ RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .re
 SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_SYSLOG_ENABLED")
 EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
 EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' || echo "")
+EMAIL_INCLUDE_INFO=$(parse_config '.notifications.email.include_info' || echo "$DEFAULT_EMAIL_INCLUDE_INFO")
 WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
 LOG_LEVEL=$(parse_config '.logging.level' || echo "$DEFAULT_LOG_LEVEL")
 LOG_FORMAT=$(parse_config '.logging.format' || echo "$DEFAULT_LOG_FORMAT")
@@ -106,7 +108,10 @@ send_notification() {
         logger -p "auth.$priority" -t "tampering-check[$SERVICE_ID]" "$message"
     fi
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$EMAIL_ENABLED" = "true" ] && [ -n "$EMAIL_RECIPIENT" ]; then
-        echo "$message" | mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT"
+        # Only send email if not info level, unless include_info is set to true in config
+        if [ "$priority" != "info" ] || [ "$EMAIL_INCLUDE_INFO" = "true" ]; then
+            echo "$message" | mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT"
+        fi
     fi
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$WEBHOOK_ENABLED" = "true" ] && [ -n "$WEBHOOK_URL" ]; then
         local timestamp
