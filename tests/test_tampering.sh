@@ -69,13 +69,11 @@ general:
 directories:
   - path: /tmp/tampering-check-test
     recursive: true
-    priority: high
 
 notifications:
   syslog:
     enabled: true
     facility: auth
-    min_priority: notice
 
 logging:
   level: debug

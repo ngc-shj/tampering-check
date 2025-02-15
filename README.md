@@ -1,204 +1,194 @@
 # Tampering Check
 
-A systemd-based file integrity monitoring system that provides real-time detection of unauthorized changes in critical system directories.
+_A systemd-based file integrity monitoring system that provides real-time detection of unauthorized changes in critical system directories._
 
 ## Features
 
-- Real-time file monitoring using inotifywait
-- Periodic integrity verification using configurable hash algorithms
-- Flexible notification system (syslog, email, webhook)
-- Systemd service template for monitoring multiple directories
-- YAML-based configuration
-- Detailed logging with log rotation
-- Security hardening through systemd security features
+- **Real-time monitoring:** Uses inotifywait to detect file changes as they occur.
+- **Periodic integrity verification:** Computes and compares file hashes using a configurable hash algorithm.
+- **Flexible notifications:** Supports syslog, aggregated email notifications, and webhook alerts.
+- **Aggregated email alerts:** Configurable aggregation interval to batch email notifications.
+- **Customizable logging:** Log messages are output to stdout (captured by journald) with configurable formats (JSON or plain text).
+- **Integrity hash file storage:** Only the hash file is stored in `/var/log/tampering-check`, with no additional log files.
+- **Multi-directory support:** Use the provided systemd service template to monitor multiple directories.
+- **YAML-based configuration:** Easily adjust parameters via `/etc/tampering-check/config.yml`.
+- **Security hardening:** Leverages systemd security features (e.g., ProtectSystem, PrivateTmp, NoNewPrivileges).
 
 ## Requirements
 
 - Linux system with systemd
-- inotify-tools package
-- [yq](https://github.com/kislyuk/yq) (for parsing configuration files)
-- mail command (for email notifications)
-- curl (for webhook notifications)
+- [inotify-tools](https://github.com/rvoicilas/inotify-tools)
+- [yq](https://github.com/kislyuk/yq) (requires jq; see below for installation note)
+- A mail client (e.g., mailutils on Debian/Ubuntu or mailx on RHEL/CentOS)
+- [curl](https://curl.se/) for webhook notifications
 
-**Note:**
-When you install yq using `pip install yq`, it is typically placed in `/usr/local/bin/yq`.
-If you want it to be located in `/usr/bin/yq`, you can create a symbolic link as follows:
-
-**Note:**
-yq (https://github.com/kislyuk/yq) requires jq to function.
-Make sure that jq is installed on your system (e.g., `sudo apt-get install jq` on Debian/Ubuntu).
-
-
+**Note:** When installing yq via `pip install yq`, it is typically placed in `/usr/local/bin/yq`. To have it in `/usr/bin/yq`, create a symbolic link:
 ```bash
 sudo ln -s /usr/local/bin/yq /usr/bin/yq
 ```
+Ensure that `jq` is installed on your system (e.g., `sudo apt-get install jq` on Debian/Ubuntu).
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/ngc-shj/tampering-check.git
-cd tampering-check
-```
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/ngc-shj/tampering-check.git
+   cd tampering-check
+   ```
 
-2. Install dependencies:
-```bash
-# For Debian/Ubuntu
-sudo apt-get install inotify-tools jq mailutils curl
-sudo pip install yq
+2. **Install dependencies:**
+   - **Debian/Ubuntu:**
+     ```bash
+     sudo apt-get install inotify-tools jq mailutils curl
+     sudo pip install yq
+     ```
+   - **RHEL/CentOS:**
+     ```bash
+     sudo dnf install inotify-tools jq mailx curl
+     sudo pip install yq
+     ```
 
-# For RHEL/CentOS
-sudo dnf install inotify-tools jq mailx curl
-sudo pip install yq
-```
-
-3. Run the installation script:
-```bash
-sudo ./scripts/install.sh
-```
+3. **Run the installation script:**
+   ```bash
+   sudo ./scripts/install.sh
+   ```
 
 ## Configuration
 
-The service can be configured through `/etc/tampering-check/config.yml`. 
-A template configuration file is provided at `config/config.yml.example`.
+The service is configured through `/etc/tampering-check/config.yml`. A template configuration file is provided at `config/config.yml.example`.
 
-1. Create your configuration:
-```bash
-sudo cp /etc/tampering-check/config.yml.example /etc/tampering-check/config.yml
-sudo nano /etc/tampering-check/config.yml
-```
+1. **Create your configuration file:**
+   ```bash
+   sudo cp /etc/tampering-check/config.yml.example /etc/tampering-check/config.yml
+   sudo nano /etc/tampering-check/config.yml
+   ```
 
-2. Key configuration options:
+2. **Key configuration options:**
 
-```yaml
-general:
-  check_interval: 300    # Seconds between integrity checks
-  hash_algorithm: sha256 # Hash algorithm to use
-  enable_alerts: true    # Enable/disable notifications
+   ```yaml
+   general:
+     check_interval: 300       # Seconds between periodic integrity checks
+     hash_algorithm: sha256      # Hash algorithm to use (e.g., sha256)
+     enable_alerts: true         # Enable/disable notifications
 
-directories:
-  - path: /etc          # Directory to monitor
-    recursive: true     # Monitor subdirectories
-    priority: high      # Priority level for alerts
+   directories:
+     - path: /etc              # Directory to monitor
+       recursive: true         # Monitor subdirectories
+       priority: high          # Alert priority for this directory
 
-notifications:
-  syslog:
-    enabled: true
-    facility: auth
-    min_priority: notice
-  email:
-    enabled: false
-    smtp_server: smtp.example.com
-    to: admin@example.com
-```
+   notifications:
+     syslog:
+       enabled: true
+       facility: auth
+     email:
+       enabled: true
+       smtp_server: smtp.example.com
+       recipient: "admin@example.com"   # Recipient email address
+       include_info: false      # Set to true to send info-level messages via email
+       aggregation_interval: 5  # Interval in seconds to aggregate email notifications
+     webhook:
+       enabled: false
+       url: "https://example.com/webhook"
+
+   logging:
+     level: info
+     format: json              # Options: "json" or "plain"
+   ```
 
 ## Usage
 
-1. Enable monitoring for specific directories:
+1. **Enable monitoring for a specific directory:**
+   ```bash
+   # Monitor the /etc directory
+   sudo systemctl enable tampering-check@etc.service
+   sudo systemctl start tampering-check@etc.service
 
-```bash
-# Monitor /etc directory
-sudo systemctl enable tampering-check@etc.service
-sudo systemctl start tampering-check@etc.service
+   # Monitor the /bin directory
+   sudo systemctl enable tampering-check@bin.service
+   sudo systemctl start tampering-check@bin.service
+   ```
 
-# Monitor /bin directory
-sudo systemctl enable tampering-check@bin.service
-sudo systemctl start tampering-check@bin.service
-```
+2. **Check service status:**
+   ```bash
+   sudo systemctl status tampering-check@etc.service
+   ```
 
-2. Check service status:
+3. **View logs:**
+   - **Systemd journal logs:**  
+     Log messages are output to stdout and captured by journald.
+     ```bash
+     sudo journalctl -u tampering-check@etc.service
+     ```
+   - **Hash file:**  
+     The only file stored in `/var/log/tampering-check` is the hash file.
+     ```bash
+     sudo cat /var/log/tampering-check/etc_hashes.txt
+     ```
 
-```bash
-sudo systemctl status tampering-check@etc.service
-```
+4. **Stop monitoring:**
+   ```bash
+   sudo systemctl stop tampering-check@etc.service
+   sudo systemctl disable tampering-check@etc.service
+   ```
 
-3. View logs:
+## Hash File and Notifications
 
-```bash
-# View systemd journal logs
-sudo journalctl -u tampering-check@etc.service
-
-# View detailed logs
-sudo cat /var/log/tampering-check/etc.log
-```
-
-4. Stop monitoring:
-
-```bash
-sudo systemctl stop tampering-check@etc.service
-sudo systemctl disable tampering-check@etc.service
-```
-
-## Logs and Alerts
-
-The service generates several types of logs:
-
-1. Service-specific logs in `/var/log/tampering-check/`:
-   - File modifications
-   - Hash verification results
-   - Service status changes
-
-2. System journal entries for:
-   - Critical file changes
-   - Service starts/stops
-   - Error conditions
-
-3. Email alerts (if configured) for:
-   - Integrity violations
-   - Critical system file modifications
-   - Service failures
+- **Hash File:**  
+  The integrity hash values for monitored files are stored in `/var/log/tampering-check`. No additional log files are written there.
+- **Systemd journal:**  
+  All log messages (e.g., notifications and status updates) are sent to stdout and managed by journald.
+- **Email alerts:**  
+  Aggregated email notifications for integrity violations and critical changes are sent based on the configured aggregation interval.
+- **Syslog and webhook:**  
+  Additional notifications are sent via syslog and webhook as configured.
 
 ## Security Considerations
 
-1. File Permissions:
-   - Service runs as root to access system directories
-   - Log files are created with 640 permissions
-   - Configuration files are created with 640 permissions
-
-2. Systemd Security:
-   - ProtectSystem=strict
-   - PrivateTmp=true
-   - NoNewPrivileges=true
-   - Other security directives enabled
-
-3. Notifications:
-   - Syslog messages use auth facility
-   - Email notifications for critical events only
-   - Webhook notifications support HTTPS
+- **File Permissions:**  
+  The service runs as root to monitor system directories. The hash file is created with strict permissions (typically 640).
+- **Systemd Security:**  
+  The provided systemd service file includes security directives such as `ProtectSystem=strict`, `PrivateTmp=true`, and `NoNewPrivileges=true` to limit the service's impact on the system.
+- **Notification Controls:**  
+  Email notifications are limited to critical events unless explicitly enabled for info-level messages.
 
 ## Troubleshooting
 
-1. Service fails to start:
-   - Check systemd journal: `journalctl -u tampering-check@*.service`
-   - Verify inotify-tools installation
-   - Check directory permissions
+1. **Service fails to start:**
+   - Check systemd journal logs:
+     ```bash
+     journalctl -u tampering-check@*.service
+     ```
+   - Verify that `inotify-tools` is installed.
+   - Confirm that directory permissions are correctly set.
 
-2. Missing notifications:
-   - Verify configuration in config.yml
-   - Check mail configuration for email notifications
-   - Verify webhook URL accessibility
+2. **Missing notifications:**
+   - Ensure configuration in `/etc/tampering-check/config.yml` is correct.
+   - Verify mail client configuration and SMTP server settings.
+   - Check webhook URL accessibility if using webhook notifications.
 
-3. High resource usage:
-   - Adjust check_interval in config
-   - Reduce number of monitored directories
-   - Consider excluding high-churn directories
+3. **High resource usage:**
+   - Adjust `check_interval` in the configuration.
+   - Exclude high-churn directories if necessary.
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch
-3. Run the tests: `./tests/test_tampering.sh`
-4. Commit your changes
-5. Push to the branch
-6. Create a Pull Request
+1. Fork the repository.
+2. Create your feature branch.
+3. Run tests (e.g., `./tests/test_tampering.sh`).
+4. Commit your changes.
+5. Push to your branch.
+6. Create a Pull Request.
+
+Please follow the coding guidelines and include detailed commit messages.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- inotify-tools developers
-- systemd team
-- YAML parser (yq) developers
+- **inotify-tools** developers
+- **systemd** team
+- **yq** and **jq** developers
+- All contributors who helped improve this project
 

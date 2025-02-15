@@ -166,7 +166,7 @@ calculate_initial_hashes() {
         find_opts="-maxdepth 1 $common_opts"
     fi
 
-    find "$WATCH_DIR" $find_opts | xargs -0 -n1 "$HASH_COMMAND" 2>/dev/null > "$HASH_FILE"
+    find "$WATCH_DIR" $find_opts | xargs -0 -n1 "${HASH_COMMAND}" 2>/dev/null > "$HASH_FILE"
     chmod 640 "$HASH_FILE"
 }
 
@@ -178,10 +178,10 @@ verify_integrity() {
     local current_hash stored_hash
     current_hash=$("${HASH_COMMAND}" "$file" 2>/dev/null | cut -d' ' -f1)
     if [ -f "$HASH_FILE" ]; then
-        stored_hash=$(grep -F "$file" "$HASH_FILE" 2>/dev/null | cut -d' ' -f1)
+        stored_hash=$(awk -v f="$file" '$2 == f { print $1 }' "$HASH_FILE")
         if [ -n "$current_hash" ] && [ -n "$stored_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
             send_notification "Integrity violation detected in file: $file" "alert"
-            sed -i "\\|  $file$|c\\$current_hash  $file" "$HASH_FILE"
+            sed -i "\\|[[:space:]]$file$|c\\$current_hash  $file" "$HASH_FILE"
         fi
     else
         "${HASH_COMMAND}" "$file" >> "$HASH_FILE"
@@ -198,6 +198,7 @@ monitor_changes() {
     
     inotifywait $inotify_opts --exclude '(\.swp(x)?$|\.swx$|~$)' -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
         local full_path="${path}${file}"
+
         case "$event" in
             MODIFY)
                 send_notification "File modified: $full_path" "warning"
@@ -206,11 +207,11 @@ monitor_changes() {
             CREATE)
                 send_notification "File created: $full_path" "notice"
                 if [ -f "$full_path" ]; then
-                    if grep -Fq "$full_path" "$HASH_FILE"; then
-                        new_hash=$("$HASH_COMMAND" "$full_path" 2>/dev/null | cut -d' ' -f1)
-                        sed -i "\\|  $full_path$|c\\$new_hash  $full_path" "$HASH_FILE"
+                    if awk -v f="$full_path" '$2 == f { found=1 } END { exit !found }' "$HASH_FILE"; then
+                        new_hash=$("${HASH_COMMAND}" "$full_path" 2>/dev/null | cut -d' ' -f1)
+                        sed -i "\\|[[:space:]]$full_path\$|c\\$new_hash  $full_path" "$HASH_FILE"
                     else
-                        "$HASH_COMMAND" "$full_path" >> "$HASH_FILE"
+                        "${HASH_COMMAND}" "$full_path" >> "$HASH_FILE"
                     fi
                 else
                     send_notification "File $full_path does not exist when attempting to calculate hash" "warning"
@@ -218,10 +219,11 @@ monitor_changes() {
                 ;;
             DELETE)
                 send_notification "File deleted: $full_path" "warning"
-                sed -i "\\|  $full_path$|d" "$HASH_FILE"
+                sed -i "\\|[[:space:]]$full_path\$|d" "$HASH_FILE"
                 ;;
             MOVED_*)
                 send_notification "File moved: $full_path" "notice"
+                verify_integrity "$full_path"
                 ;;
         esac
     done

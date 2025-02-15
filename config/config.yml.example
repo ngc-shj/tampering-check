@@ -11,7 +11,6 @@ notifications:
   syslog:
     enabled: true
     facility: auth
-    min_priority: notice
   email:
     enabled: false       # Set to true to enable email notifications
     recipient: "admin@example.com"  # Recipient email address
