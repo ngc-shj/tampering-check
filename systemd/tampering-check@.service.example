@@ -11,7 +11,11 @@ StandardError=journal
 ProtectSystem=strict
 PrivateTmp=true
 NoNewPrivileges=true
-ReadWritePaths=/var/log/tampering-check /var/lock /var/spool/postfix/maildrop
+RuntimeDirectory=tampering-check
+RuntimeDirectoryMode=0700
+StateDirectory=tampering-check
+StateDirectoryMode=0700
+ReadWritePaths=/var/spool/postfix/maildrop
 
 [Install]
 WantedBy=multi-user.target

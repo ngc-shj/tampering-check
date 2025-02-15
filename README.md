@@ -9,7 +9,7 @@ _A systemd-based file integrity monitoring system that provides real-time detect
 - **Flexible notifications:** Supports syslog, aggregated email notifications, and webhook alerts.
 - **Aggregated email alerts:** Configurable aggregation interval to batch email notifications.
 - **Customizable logging:** Log messages are output to stdout (captured by journald) with configurable formats (JSON or plain text).
-- **Integrity hash file storage:** Only the hash file is stored in `/var/log/tampering-check`, with no additional log files.
+- **Integrity hash file storage:** Only the hash file is stored in `/var/lib/tampering-check`.
 - **Multi-directory support:** Use the provided systemd service template to monitor multiple directories.
 - **YAML-based configuration:** Easily adjust parameters via `/etc/tampering-check/config.yml`.
 - **Security hardening:** Leverages systemd security features (e.g., ProtectSystem, PrivateTmp, NoNewPrivileges).
@@ -118,9 +118,9 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
      sudo journalctl -u tampering-check@etc.service
      ```
    - **Hash file:**
-     The only file stored in `/var/log/tampering-check` is the hash file.
+     The only file stored in `/var/lib/tampering-check` is the hash file.
      ```bash
-     sudo cat /var/log/tampering-check/etc_hashes.txt
+     sudo cat /var/lib/tampering-check/etc_hashes.txt
      ```
 
 4. **Stop monitoring:**
@@ -132,7 +132,7 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
 ## Hash File and Notifications
 
 - **Hash File:**
-  The integrity hash values for monitored files are stored in `/var/log/tampering-check`. No additional log files are written there.
+  The integrity hash values for monitored files are stored in `/var/lib/tampering-check`.
 - **Systemd journal:**
   All log messages (e.g., notifications and status updates) are sent to stdout and managed by journald.
 - **Email alerts:**

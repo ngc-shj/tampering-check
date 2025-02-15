@@ -74,17 +74,19 @@ echo "Using hash algorithm: ${HASH_COMMAND}" >&2
 SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
 
 # Define log directory and hash file path (log output goes to stdout; hash file is used for hash management)
-LOG_DIR="/var/log/tampering-check"
+LOG_DIR="/var/lib/tampering-check"
 HASH_FILE="${LOG_DIR}/${SERVICE_ID}_hashes.txt"
 
 # Create directory for hash file and set proper permissions
-mkdir -p "$LOG_DIR"
-chmod 750 "$LOG_DIR"
 touch "$HASH_FILE"
 chmod 640 "$HASH_FILE"
 
+# Define runtime directory and lock file path
+RUN_DIR="/run/tampering-check"
+LOCK_FILE="${RUN_DIR}/tampering-check.lock"
+
 # Create a secure temporary file for email queue using mktemp
-EMAIL_QUEUE=$( (umask 077 && mktemp /tmp/tampering_check_email_queue.XXXXXX) )
+EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
 
 # Function: log_message
 # Outputs a log message in the specified format to stdout.
@@ -108,7 +110,7 @@ queue_email_notification() {
     {
         flock -x 200  # Exclusive lock to prevent concurrent writes
         echo "$message" >> "$EMAIL_QUEUE"
-    } 200>/var/lock/tampering_check_email.lock
+    } 200>"$LOCK_FILE"
 }
 
 # Function: send_notification
@@ -159,7 +161,7 @@ send_queued_emails() {
                 rm -f "$tmp_queue"
             fi
 
-        } 200>/var/lock/tampering_check_email.lock
+        } 200>"$LOCK_FILE"
     done
 }
 

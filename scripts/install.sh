@@ -24,7 +24,6 @@ fi
 # Set paths
 INSTALL_DIR="/usr/local/sbin"
 SYSTEMD_DIR="/etc/systemd/system"
-LOG_DIR="/var/log/tampering-check"
 CONFIG_DIR="/etc/tampering-check"
 
 # Function: check_dependencies
@@ -47,8 +46,8 @@ check_dependencies() {
 # Function: create_directories
 # Creates necessary directories with proper permissions.
 create_directories() {
-    mkdir -p "$LOG_DIR" "$CONFIG_DIR"
-    chmod 750 "$LOG_DIR" "$CONFIG_DIR"
+    mkdir -p "$CONFIG_DIR"
+    chmod 750 "$CONFIG_DIR"
 }
 
 # Function: install_files

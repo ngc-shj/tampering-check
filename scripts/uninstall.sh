@@ -23,7 +23,6 @@ fi
 # Set paths
 INSTALL_DIR="/usr/local/sbin"
 SYSTEMD_DIR="/etc/systemd/system"
-LOG_DIR="/var/log/tampering-check"
 CONFIG_DIR="/etc/tampering-check"
 
 # Function: stop_services
@@ -42,24 +41,13 @@ remove_files() {
 }
 
 # Function: cleanup_directories
-# Cleans up directories, asking the user if logs or configuration should be preserved.
+# Cleans up directories, asking the user if configuration should be preserved.
 cleanup_directories() {
-    local preserve_logs=0
     local preserve_config=0
-    read -p "Do you want to preserve logs? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        preserve_logs=1
-    fi
     read -p "Do you want to preserve configuration? [y/N] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         preserve_config=1
-    fi
-    if [ "$preserve_logs" -eq 0 ]; then
-        rm -rf "$LOG_DIR"
-    else
-        print_status "$YELLOW" "Preserving logs in $LOG_DIR"
     fi
     if [ "$preserve_config" -eq 0 ]; then
         rm -rf "$CONFIG_DIR"
