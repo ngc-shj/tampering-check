@@ -81,9 +81,9 @@ HASH_FILE="${LOG_DIR}/${SERVICE_ID}_hashes.txt"
 touch "$HASH_FILE"
 chmod 640 "$HASH_FILE"
 
-# Define runtime directory and lock file path
+# Define runtime directory and lock file path (unique per monitored directory)
 RUN_DIR="/run/tampering-check"
-LOCK_FILE="${RUN_DIR}/tampering-check.lock"
+LOCK_FILE="${RUN_DIR}/${SERVICE_ID}.lock"
 
 # Create a secure temporary file for email queue using mktemp
 EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
@@ -110,7 +110,7 @@ queue_email_notification() {
     {
         flock -x 200  # Exclusive lock to prevent concurrent writes
         echo "$message" >> "$EMAIL_QUEUE"
-    } 200>"$LOCK_FILE"
+    } 200>"${LOCK_FILE}"
 }
 
 # Function: send_notification
@@ -161,7 +161,7 @@ send_queued_emails() {
                 rm -f "$tmp_queue"
             fi
 
-        } 200>"$LOCK_FILE"
+        } 200>"${LOCK_FILE}"
     done
 }
 
