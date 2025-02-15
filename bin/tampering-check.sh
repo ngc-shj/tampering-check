@@ -28,7 +28,8 @@ parse_config() {
         local key="$1"
         local value
         value=$(yq -r "$key" "$CONFIG_FILE" 2>/dev/null)
-        if [ -z "$value" ]; then
+        # Treat empty or "null" result as not found.
+        if [ -z "$value" ] || [ "$value" = "null" ]; then
             return 1
         else
             echo "$value"
