@@ -113,12 +113,12 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
    ```
 
 3. **View logs:**
-   - **Systemd journal logs:**  
+   - **Systemd journal logs:**
      Log messages are output to stdout and captured by journald.
      ```bash
      sudo journalctl -u tampering-check@etc.service
      ```
-   - **Hash file:**  
+   - **Hash file:**
      The only file stored in `/var/log/tampering-check` is the hash file.
      ```bash
      sudo cat /var/log/tampering-check/etc_hashes.txt
@@ -132,22 +132,32 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
 
 ## Hash File and Notifications
 
-- **Hash File:**  
+- **Hash File:**
   The integrity hash values for monitored files are stored in `/var/log/tampering-check`. No additional log files are written there.
-- **Systemd journal:**  
+- **Systemd journal:**
   All log messages (e.g., notifications and status updates) are sent to stdout and managed by journald.
-- **Email alerts:**  
+- **Email alerts:**
   Aggregated email notifications for integrity violations and critical changes are sent based on the configured aggregation interval.
-- **Syslog and webhook:**  
+- **Syslog and webhook:**
   Additional notifications are sent via syslog and webhook as configured.
 
 ## Security Considerations
 
-- **File Permissions:**  
+- **File Permissions:**
   The service runs as root to monitor system directories. The hash file is created with strict permissions (typically 640).
-- **Systemd Security:**  
-  The provided systemd service file includes security directives such as `ProtectSystem=strict`, `PrivateTmp=true`, and `NoNewPrivileges=true` to limit the service's impact on the system.
-- **Notification Controls:**  
+- **Systemd Security:**
+  The provided systemd service file includes security directives to limit the service's impact.
+  **Note:** By default, the service file uses:
+  ```ini
+  ProtectSystem=strict
+  PrivateTmp=true
+  NoNewPrivileges=true
+  ```
+  If your environment requires additional write access (for example, if Postfix must write to its maildrop directory), you may:
+  - Add extra paths to ReadWritePaths (e.g., `/var/spool/postfix/maildrop`), or
+  - Change `ProtectSystem` from "strict" to "full".
+  Adjust these settings based on your system configuration and security requirements.
+- **Notification Controls:**
   Email notifications are limited to critical events unless explicitly enabled for info-level messages.
 
 ## Troubleshooting
