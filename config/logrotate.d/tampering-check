@@ -1,0 +1,13 @@
+/var/log/tampering-check/*.log {
+    weekly
+    missingok
+    rotate 4
+    compress
+    delaycompress
+    notifempty
+    create 640 root adm
+    sharedscripts
+    postrotate
+        /bin/systemctl reload tampering-check@.service > /dev/null 2>&1 || true
+    endscript
+}

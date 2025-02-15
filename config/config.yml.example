@@ -1,0 +1,25 @@
+general:
+  check_interval: 300
+  hash_algorithm: sha256
+  enable_alerts: true
+
+directories:
+  - path: /path/to/monitor
+    recursive: true
+    priority: normal
+
+notifications:
+  syslog:
+    enabled: true
+    facility: auth
+    min_priority: notice
+  email:
+    enabled: false       # Set to true to enable email notifications
+    recipient: "admin@example.com"  # Recipient email address
+  webhook:
+    enabled: false       # Set to true to enable webhook notifications
+    url: "https://example.com/webhook"  # Webhook URL to receive POST notifications
+
+logging:
+  level: info
+

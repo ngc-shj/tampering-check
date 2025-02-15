@@ -1,0 +1,12 @@
+[Unit]
+Description=Tampering Check Service for %I
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/tampering-check.sh %I
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
