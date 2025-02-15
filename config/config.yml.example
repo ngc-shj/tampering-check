@@ -21,4 +21,5 @@ notifications:
 
 logging:
   level: info
+  format: plain
 

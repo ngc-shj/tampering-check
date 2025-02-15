@@ -45,13 +45,6 @@ check_dependencies() {
     fi
 }
 
-# Function: create_directories
-# Creates necessary directories with proper permissions.
-create_directories() {
-    mkdir -p "$LOG_DIR" "$CONFIG_DIR"
-    chmod 750 "$LOG_DIR" "$CONFIG_DIR"
-}
-
 # Function: install_files
 # Installs main script, systemd service, logrotate configuration, and example config.
 install_files() {
@@ -70,8 +63,6 @@ install_files() {
 # Reloads systemd and sets up log files.
 configure_system() {
     systemctl daemon-reload
-    touch "$LOG_DIR/install.log"
-    chmod 640 "$LOG_DIR/install.log"
 }
 
 # Main installation flow
@@ -79,8 +70,6 @@ main() {
     print_status "$GREEN" "Starting tampering-check installation..."
     print_status "$GREEN" "Checking dependencies..."
     check_dependencies
-    print_status "$GREEN" "Creating directories..."
-    create_directories
     print_status "$GREEN" "Installing files..."
     install_files
     print_status "$GREEN" "Configuring system..."
