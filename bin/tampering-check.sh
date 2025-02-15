@@ -158,7 +158,7 @@ calculate_initial_hashes() {
     log_message "info" "Calculating initial hash values for $WATCH_DIR"
     
     # Find options to exclude temporary files
-    local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*~' -print0"
+    local common_opts="-type f ! -name '*.swp' ! -name '*.swpx' ! -name '*.swx' ! -name '*~' -print0"
     local find_opts=""
     if [ "$RECURSIVE" = "true" ]; then
         find_opts="$common_opts"
@@ -196,7 +196,7 @@ monitor_changes() {
     local inotify_opts="-m"
     [ "$RECURSIVE" = "true" ] && inotify_opts="$inotify_opts -r"
     
-    inotifywait $inotify_opts --exclude '(\.swp(x)?$|~$)' -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
+    inotifywait $inotify_opts --exclude '(\.swp(x)?$|\.swx$|~$)' -e modify,create,delete,move "$WATCH_DIR" | while read -r path event file; do
         local full_path="${path}${file}"
         case "$event" in
             MODIFY)
