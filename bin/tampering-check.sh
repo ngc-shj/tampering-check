@@ -11,6 +11,7 @@ DEFAULT_RECURSIVE=true
 DEFAULT_SYSLOG_ENABLED=true
 DEFAULT_EMAIL_ENABLED=false
 DEFAULT_EMAIL_INCLUDE_INFO=false
+DEFAULT_EMAIL_AGGREGATION_INTERVAL=5
 DEFAULT_WEBHOOK_ENABLED=false
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_LOG_FORMAT="plain"
@@ -56,6 +57,7 @@ SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_
 EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
 EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' || echo "")
 EMAIL_INCLUDE_INFO=$(parse_config '.notifications.email.include_info' || echo "$DEFAULT_EMAIL_INCLUDE_INFO")
+EMAIL_AGGREGATION_INTERVAL=$(parse_config '.notifications.email.aggregation_interval' || echo "$DEFAULT_EMAIL_AGGREGATION_INTERVAL")
 WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
 LOG_LEVEL=$(parse_config '.logging.level' || echo "$DEFAULT_LOG_LEVEL")
 LOG_FORMAT=$(parse_config '.logging.format' || echo "$DEFAULT_LOG_FORMAT")
@@ -83,6 +85,10 @@ chmod 750 "$LOG_DIR"
 touch "$HASH_FILE"
 chmod 640 "$HASH_FILE"
 
+# Create a secure temporary file for email queue using mktemp
+EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
+chmod 600 "$EMAIL_QUEUE"
+
 # Function: log_message
 # Outputs a log message in the specified format to stdout.
 log_message() {
@@ -98,6 +104,13 @@ log_message() {
     fi
 }
 
+# Function: queue_email_notification
+# Appends the message to the email queue file.
+queue_email_notification() {
+    local message="$1"
+    echo "$message" >> "$EMAIL_QUEUE"
+}
+
 # Function: send_notification
 # Sends a notification by logging a JSON message to stdout and optionally forwarding to syslog, email, or webhook.
 send_notification() {
@@ -107,10 +120,11 @@ send_notification() {
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$SYSLOG_ENABLED" = "true" ]; then
         logger -p "auth.$priority" -t "tampering-check[$SERVICE_ID]" "$message"
     fi
+    # Queue email notifications (skip info messages unless EMAIL_INCLUDE_INFO is true)
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$EMAIL_ENABLED" = "true" ] && [ -n "$EMAIL_RECIPIENT" ]; then
         # Only send email if not info level, unless include_info is set to true in config
         if [ "$priority" != "info" ] || [ "$EMAIL_INCLUDE_INFO" = "true" ]; then
-            echo "$message" | mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT"
+            queue_email_notification "$message"
         fi
     fi
     if [ "$ENABLE_ALERTS" = "true" ] && [ "$WEBHOOK_ENABLED" = "true" ] && [ -n "$WEBHOOK_URL" ]; then
@@ -120,6 +134,21 @@ send_notification() {
              -d "{\"service_id\": \"$SERVICE_ID\", \"priority\": \"$priority\", \"message\": \"$message\", \"timestamp\": \"$timestamp\"}" \
              "$WEBHOOK_URL" >/dev/null 2>&1 || true
     fi
+}
+
+# Function: send_queued_emails
+# Checks the email queue every EMAIL_AGGREGATION_INTERVAL seconds and sends aggregated email notifications if any messages are queued.
+send_queued_emails() {
+    while true; do
+        sleep "$EMAIL_AGGREGATION_INTERVAL"
+        if [ -s "$EMAIL_QUEUE" ]; then
+            local email_body
+            email_body=$(cat "$EMAIL_QUEUE")
+            echo "$email_body" | mail -s "Tampering Alert on $SERVICE_ID" "$EMAIL_RECIPIENT"
+            # Clear the email queue file
+            > "$EMAIL_QUEUE"
+        fi
+    done
 }
 
 # Function: calculate_initial_hashes
@@ -212,10 +241,11 @@ periodic_verification() {
     done
 }
 
-# Main execution: calculate initial hashes, start periodic verification, and begin monitoring
+# Main execution: calculate initial hashes, start periodic verification, email aggregator, and begin monitoring
 main() {
     calculate_initial_hashes
     periodic_verification &
+    send_queued_emails &
     monitor_changes
 }
 

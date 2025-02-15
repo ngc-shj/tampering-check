@@ -15,6 +15,7 @@ notifications:
   email:
     enabled: false       # Set to true to enable email notifications
     recipient: "admin@example.com"  # Recipient email address
+    aggregation_interval: 5
   webhook:
     enabled: false       # Set to true to enable webhook notifications
     url: "https://example.com/webhook"  # Webhook URL to receive POST notifications
