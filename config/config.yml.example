@@ -1,26 +1,126 @@
+# Example configuration file for tampering-check with additional English comments.
+
 general:
+  # Interval (in seconds) between periodic integrity checks.
+  # The script will periodically verify all stored hashes at this frequency.
   check_interval: 300
-  storage_mode: sqlite3   # "text" or "sqlite3"
+
+  # Storage mode for file hashes. Can be:
+  # - "text": use a text file to store hashes
+  # - "sqlite3": use an SQLite database to store hashes
+  storage_mode: sqlite3
+
+  # Hash algorithm to use when calculating file hashes (e.g., sha256 => sha256sum).
   hash_algorithm: sha256
+
+  # Enable or disable alerts globally. If set to false, no notifications are sent.
   enable_alerts: true
 
+alert_matrix:
+  # This section defines an alert level for each combination of importance
+  # (critical, high, medium, low, ignore) and file event (create, modify, delete, move).
+  # The resulting value (e.g., "notice", "warning", "alert", "critical", "info", "ignore")
+  # is used to determine how the script logs or notifies about the event.
+
+  critical:
+    create: "alert"
+    modify: "critical"
+    delete: "critical"
+    move:   "critical"
+
+  high:
+    create: "warning"
+    modify: "alert"
+    delete: "alert"
+    move:   "warning"
+
+  medium:
+    create: "notice"
+    modify: "warning"
+    delete: "warning"
+    move:   "notice"
+
+  low:
+    create: "info"
+    modify: "notice"
+    delete: "notice"
+    move:   "info"
+
+  ignore:
+    create: "ignore"
+    modify: "ignore"
+    delete: "ignore"
+    move:   "ignore"
+
 directories:
-  - path: /path/to/monitor
+  # Each directory entry can specify:
+  #   path               => the directory path to watch
+  #   recursive          => whether to monitor subdirectories
+  #   default_importance => if no file-specific override is found, use this importance
+  #
+  # The "importance" field can be one of:
+  #   - "critical"
+  #   - "high"
+  #   - "medium"
+  #   - "low"
+  #   - "ignore"
+
+  - path: /etc
     recursive: true
+    default_importance: high
+
+  - path: /var
+    recursive: true
+    default_importance: low
+
+files:
+  # For specific file paths, you can override the directory's default_importance.
+  # The same importance options apply here:
+  #   - "critical", "high", "medium", "low", or "ignore"
+
+  - path: /etc/shadow
+    importance: critical
+
+  - path: /etc/passwd
+    importance: critical
+
+  # Example: ignoring a certain directory path by marking it "ignore"
+  - path: /var/log
+    importance: ignore
 
 notifications:
   syslog:
+    # If syslog is enabled, relevant events (above "ignore") will be forwarded
+    # to syslog with a specified facility, e.g., "auth", "daemon", etc.
     enabled: true
     facility: auth
+
   email:
-    enabled: false       # Set to true to enable email notifications
-    recipient: "admin@example.com"  # Recipient email address
+    # Because email is considered fail-safe, default is false.
+    # If set to true, the script will queue email notifications for events
+    # at or above min_priority and send them every aggregation_interval seconds.
+    enabled: false
+
+    recipient: "admin@example.com"
+
+    # min_priority can be one of: "ignore", "info", "notice", "warning", "alert", "critical"
+    # Only events with priority >= min_priority will trigger emails.
+    min_priority: "notice"
+
+    # How frequently (in seconds) to flush queued email notifications.
     aggregation_interval: 5
+
   webhook:
-    enabled: false       # Set to true to enable webhook notifications
-    url: "https://example.com/webhook"  # Webhook URL to receive POST notifications
+    # If enabled, the script will POST each relevant event to the specified URL.
+    enabled: false
+    url: "https://example.com/webhook"
 
 logging:
+  # Global logging level for the script's internal logs (not syslog).
   level: info
+
+  # Output format for the script logs:
+  # - "plain": standard text lines
+  # - "json": structured JSON lines
   format: plain
 

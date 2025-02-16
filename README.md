@@ -4,132 +4,188 @@ _A systemd-based file integrity monitoring system that provides real-time detect
 
 ## Features
 
-- **Real-time monitoring:** Uses inotifywait to detect file changes as they occur.
-- **Periodic integrity verification:** Computes and compares file hashes using a configurable hash algorithm.
-- **Flexible notifications:** Supports syslog, aggregated email notifications, and webhook alerts.
-- **Aggregated email alerts:** Configurable aggregation interval to batch email notifications.
-- **Customizable logging:** Log messages are output to stdout (captured by journald) with configurable formats (JSON or plain text).
-- **Integrity hash storage:** Supports `text` file or `sqlite3` database for storing integrity hashes.
+- **Real-time monitoring:** Uses `inotifywait` to detect file changes as they occur.
+- **Periodic integrity verification:** Periodically computes and compares file hashes using a configurable hash algorithm (e.g., `sha256`).
+- **Flexible notifications:** Supports syslog, aggregated email alerts, and webhook notifications.
+- **Customizable alert matrix:** Define how each importance level (e.g., `critical`, `high`, `medium`, `low`, `ignore`) reacts to file events (`create`, `modify`, `delete`, `move`).
+- **Configurable email threshold:** Use a `min_priority` (e.g., `notice`, `warning`, `alert`, `critical`) to decide which events get emailed.
+- **Customizable logging:** Output log messages in either plain text or JSON format. All logs also appear in the system journal.
+- **Various integrity hash storage:** Store file hashes in a text file or an SQLite database.
 - **Multi-directory support:** Use the provided systemd service template to monitor multiple directories.
-- **YAML-based configuration:** Easily adjust parameters via `/etc/tampering-check/config.yml`.
-- **Security hardening:** Leverages systemd security features (e.g., ProtectSystem, PrivateTmp, NoNewPrivileges).
+- **YAML-based configuration:** Easily adjust parameters in `/etc/tampering-check/config.yml`.
+- **Security hardening:** Leverages systemd security features such as `ProtectSystem=strict`, `PrivateTmp`, and `NoNewPrivileges`.
 
 ## Requirements
 
-- Linux system with systemd
+- A Linux system with systemd
 - [inotify-tools](https://github.com/rvoicilas/inotify-tools)
-- [yq](https://github.com/kislyuk/yq) (requires jq; see below for installation note)
-- A mail client (e.g., mailutils on Debian/Ubuntu or mailx on RHEL/CentOS)
-- [curl](https://curl.se/) for webhook notifications
-- [sqlite3](https://www.sqlite.org/) (only required when using `sqlite3` storage mode)
+- [yq](https://github.com/kislyuk/yq) (requires jq; see installation notes below)
+- A mail client (e.g., `mailutils` on Debian/Ubuntu or `mailx` on RHEL/CentOS) if email alerts are needed
+- [curl](https://curl.se/) if webhook notifications are used
+- [sqlite3](https://www.sqlite.org/) (only required if `storage_mode` is set to `sqlite3`)
 
-**Note:** When installing yq via `pip install yq`, it is typically placed in `/usr/local/bin/yq`. To have it in `/usr/bin/yq`, create a symbolic link:
+**Note on yq:**
+When installing yq via `pip install yq`, it is typically placed in `/usr/local/bin/yq`. If desired, create a symbolic link to `/usr/bin/yq`:
+
 ```bash
 sudo ln -s /usr/local/bin/yq /usr/bin/yq
 ```
-Ensure that `jq` is installed on your system (e.g., `sudo apt-get install jq` on Debian/Ubuntu).
+
+Also ensure `jq` is installed (`sudo apt-get install jq` on Debian/Ubuntu, etc.).
 
 ## Installation
 
-1. **Clone the repository:**
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/ngc-shj/tampering-check.git
    cd tampering-check
    ```
 
-2. **Install dependencies:**
-   - **Debian/Ubuntu:**
+2. **Install dependencies**:
+
+   - **Debian/Ubuntu**:
      ```bash
      sudo apt-get install inotify-tools jq mailutils curl sqlite3
      sudo pip install yq
      ```
-   - **RHEL/CentOS:**
+
+   - **RHEL/CentOS**:
      ```bash
      sudo dnf install inotify-tools jq mailx curl sqlite3
      sudo pip install yq
      ```
 
-3. **Run the installation script:**
+3. **Run the installation script**:
    ```bash
    sudo ./scripts/install.sh
    ```
 
+This script installs the main `tampering-check.sh` script, sets up systemd service files, and copies a sample config to `/etc/tampering-check/config.yml.example`.
+
 ## Configuration
 
-The service is configured through `/etc/tampering-check/config.yml`. A template configuration file is provided at `config/config.yml.example`.
+The main configuration file is `/etc/tampering-check/config.yml`. A sample file is provided at `config/config.yml.example`. Copy or edit it to match your environment.
 
-1. **Create your configuration file:**
-   ```bash
-   sudo cp /etc/tampering-check/config.yml.example /etc/tampering-check/config.yml
-   sudo nano /etc/tampering-check/config.yml
-   ```
+### Key Sections in `config.yml`
 
-2. **Key configuration options:**
+```yaml
+general:
+  check_interval: 300            # Interval (seconds) for periodic re-check
+  storage_mode: sqlite3          # Either "text" or "sqlite3"
+  hash_algorithm: sha256         # e.g., "sha256sum"
+  enable_alerts: true            # Globally enable or disable alerts
 
-   ```yaml
-   general:
-     check_interval: 300       # Seconds between periodic integrity checks
-     storage_mode: text        # Storage mode: "text" or "sqlite3"
-     hash_algorithm: sha256    # Hash algorithm to use (e.g., sha256)
-     enable_alerts: true       # Enable/disable notifications
+alert_matrix:
+  # For each importance (critical, high, medium, low, ignore) and each file event
+  # (create, modify, delete, move), define the resulting alert level (e.g., "critical", "warning", "info", "ignore").
 
-   directories:
-     - path: /etc              # Directory to monitor
-       recursive: true         # Monitor subdirectories
+  critical:
+    create: "alert"
+    modify: "critical"
+    delete: "critical"
+    move:   "critical"
 
-   notifications:
-     syslog:
-       enabled: true
-       facility: auth
-     email:
-       enabled: true
-       recipient: "admin@example.com"   # Recipient email address
-       include_info: false      # Set to true to send info-level messages via email
-       aggregation_interval: 5  # Interval in seconds to aggregate email notifications
-     webhook:
-       enabled: false
-       url: "https://example.com/webhook"
+  high:
+    create: "warning"
+    modify: "alert"
+    delete: "alert"
+    move:   "warning"
 
-   logging:
-     level: info
-     format: json              # Options: "json" or "plain"
-   ```
+  medium:
+    create: "notice"
+    modify: "warning"
+    delete: "warning"
+    move:   "notice"
+
+  low:
+    create: "info"
+    modify: "notice"
+    delete: "notice"
+    move:   "info"
+
+  ignore:
+    create: "ignore"
+    modify: "ignore"
+    delete: "ignore"
+    move:   "ignore"
+
+directories:
+  # Define directories to monitor.
+  - path: /etc
+    recursive: true
+    default_importance: high
+
+files:
+  # Override importance for specific files.
+  - path: /etc/shadow
+    importance: critical
+  - path: /etc/passwd
+    importance: critical
+  - path: /var/log
+    importance: ignore
+
+notifications:
+  syslog:
+    enabled: true
+    facility: auth
+
+  email:
+    # Default to false to be fail-safe; only enable if you have a proper mail setup.
+    enabled: false
+    recipient: "admin@example.com"
+    # min_priority => only events at or above this priority get emailed
+    min_priority: "notice"
+    aggregation_interval: 5      # Aggregation frequency (seconds)
+
+  webhook:
+    enabled: false
+    url: "https://example.com/webhook"
+
+logging:
+  level: info
+  format: plain
+```
+
+- **`alert_matrix`**: Defines how each importance level (e.g. `critical`, `high`, etc.) reacts to file events (`create`, `modify`, `delete`, `move`).
+- **`directories`**: Each entry specifies a path, whether subdirectories are included (`recursive`), and a `default_importance` to assign if no file entry overrides it.
+- **`files`**: Specific file paths override the directory’s default importance. 
+  - Valid `importance` values: `critical`, `high`, `medium`, `low`, `ignore`.
+- **`notifications.email.min_priority`**: Only events at or above this level (e.g. `notice`, `warning`, `alert`, `critical`) will be emailed.
 
 ## Usage
 
-1. **Enable monitoring for a specific directory:**
+1. **Enable monitoring** for a specific directory, e.g. `/etc`:
    ```bash
-   # Monitor the /etc directory
    sudo systemctl enable tampering-check@etc.service
    sudo systemctl start tampering-check@etc.service
-   
-   # Monitor the /bin directory
+   ```
+   For `/bin`, you would do:
+   ```bash
    sudo systemctl enable tampering-check@bin.service
    sudo systemctl start tampering-check@bin.service
    ```
 
-2. **Check service status:**
+2. **Check service status**:
    ```bash
    sudo systemctl status tampering-check@etc.service
    ```
 
-3. **View logs:**
-   - **Systemd journal logs:**
-     Log messages are output to stdout and captured by journald.
+3. **View logs**:
+   - **Systemd journal logs**:
      ```bash
      sudo journalctl -u tampering-check@etc.service
      ```
-   - **Stored hash data:**
-     Depending on the `storage_mode`, hashes are stored as follows:
-     ```bash
-     # If using text mode:
-     sudo cat /var/lib/tampering-check/etc_hashes.txt
-     
-     # If using sqlite3 mode:
-     sudo sqlite3 /var/lib/tampering-check/etc_hashes.db "SELECT * FROM hashes;"
-     ```
+   - **Stored hash data**:
+     - If using `text` mode:
+       ```bash
+       sudo cat /var/lib/tampering-check/etc_hashes.txt
+       ```
+     - If using `sqlite3` mode:
+       ```bash
+       sudo sqlite3 /var/lib/tampering-check/etc_hashes.db "SELECT * FROM hashes;"
+       ```
 
-4. **Stop monitoring:**
+4. **Stop monitoring**:
    ```bash
    sudo systemctl stop tampering-check@etc.service
    sudo systemctl disable tampering-check@etc.service
@@ -137,52 +193,51 @@ The service is configured through `/etc/tampering-check/config.yml`. A template 
 
 ## Hash Storage and Notifications
 
-- **Hash Storage:**
-  The integrity hash values for monitored files are stored in `/var/lib/tampering-check`. Depending on `storage_mode`, this is either a text file (`*_hashes.txt`) or an SQLite database (`*_hashes.db`).
-- **Systemd journal:**
-  All log messages (e.g., notifications and status updates) are sent to stdout and managed by journald.
-- **Email alerts:**
-  Aggregated email notifications for integrity violations and critical changes are sent based on the configured aggregation interval.
-- **Syslog and webhook:**
-  Additional notifications are sent via syslog and webhook as configured.
+- **Hash Storage**:
+  Files are stored in `/var/lib/tampering-check`. Depending on `storage_mode`, either a text file (`*_hashes.txt`) or an SQLite DB (`*_hashes.db`) is used.
+- **Syslog**:
+  If enabled, relevant events are logged via `logger` at a mapped priority (e.g. `critical` => `crit`).
+- **Email**:
+  If `enabled: true` and `min_priority` is set, then events at or above that level are aggregated and emailed every `aggregation_interval` seconds.
+- **Webhook**:
+  If enabled, each event triggers an HTTP POST to the specified `url`.
 
 ## Security Considerations
 
-- **File Permissions:**
-  The service runs as root to monitor system directories. The hash file/database is created with strict permissions (typically 640).
-- **Systemd Security:**
-  The provided systemd service file includes security directives to limit the service's impact.
-  **Note:** By default, the service file uses:
+- **File Permissions**:
+  Because the service monitors system directories, it typically runs as root. Hash files (`*_hashes.txt`) or the SQLite DB are created with restrictive permissions (e.g., `640`).
+- **Systemd Security**:
+  The service file uses:
   ```ini
   ProtectSystem=strict
   PrivateTmp=true
   NoNewPrivileges=true
   ```
-  If your environment requires additional write access (for example, if Postfix must write to its maildrop directory), you may:
-  - Add extra paths to ReadWritePaths (e.g., `/var/spool/postfix/maildrop`), or
-  - Change `ProtectSystem` from "strict" to "full".
-  Adjust these settings based on your system configuration and security requirements.
-- **Notification Controls:**
-  Email notifications are limited to critical events unless explicitly enabled for info-level messages.
+  If you need to allow additional writes (e.g., Postfix maildrop), you can add:
+  ```ini
+  ReadWritePaths=/var/spool/postfix/maildrop
+  ```
+  or adjust `ProtectSystem` to `"full"`.
 
 ## Troubleshooting
 
-1. **Service fails to start:**
-   - Check systemd journal logs:
+1. **Service fails to start**:
+   - Check systemd logs:
      ```bash
      journalctl -u tampering-check@*.service
      ```
-   - Verify that `inotify-tools` and `sqlite3` (if applicable) are installed.
+   - Ensure you have installed `inotify-tools` and (if using sqlite3) `sqlite3`.
 
-2. **Missing notifications:**
-   - Ensure configuration in `/etc/tampering-check/config.yml` is correct.
-   - Check webhook URL accessibility if using webhook notifications.
+2. **Notifications missing**:
+   - Verify `enable_alerts: true` and your config for `email` or `webhook` sections.
+   - Check if `EMAIL_MIN_PRIORITY` is set too high (e.g. `critical`) so that lower-level events are not emailed.
+   - Make sure your mail system is configured if you rely on email.
 
-3. **High resource usage:**
-   - Adjust `check_interval` in the configuration.
+3. **High resource usage**:
+   - Increase `check_interval` in the config if periodic checks are too frequent.
+   - Avoid monitoring directories with extremely high churn, or mark them with `ignore`.
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 
