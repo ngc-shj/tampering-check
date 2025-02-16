@@ -3,7 +3,7 @@
 general:
   # Interval (in seconds) between periodic integrity checks.
   # The script will periodically verify all stored hashes at this frequency.
-  check_interval: 300
+  check_interval: 3600
 
   # Storage mode for file hashes. Can be:
   # - "text": use a text file to store hashes

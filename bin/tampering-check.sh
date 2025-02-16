@@ -7,7 +7,7 @@ set -e
 
 CONFIG_FILE="/etc/tampering-check/config.yml"
 
-DEFAULT_CHECK_INTERVAL=300
+DEFAULT_CHECK_INTERVAL=3600
 DEFAULT_STORAGE_MODE="text"       # Default to text storage
 DEFAULT_HASH_ALGORITHM="sha256"
 DEFAULT_ENABLE_ALERTS=true
@@ -33,7 +33,7 @@ declare -A ALERT_MATRIX=()  # For reading an 'alert_matrix' from config.yml.
 ################################################################################
 
 usage() {
-    echo "Usage: $0 [-c CONFIG_FILE] WATCH_DIR"
+    echo "Usage: $(basename $0) [-c CONFIG_FILE] WATCH_DIR"
     echo "  -c CONFIG_FILE : specify custom configuration file path (optional)"
     echo "  WATCH_DIR      : directory to monitor"
 }
@@ -43,15 +43,15 @@ usage() {
 # parse_options
 # where we handle command-line arguments and set WATCH_DIR
 ################################################################################
+
 parse_options() {
-    local usage="Usage: $0 [-c CONFIG_FILE] WATCH_DIR"
     while getopts "c:h" opt; do
         case "$opt" in
             c)
                 CONFIG_FILE="$OPTARG"
                 ;;
             h|\?)
-                echo "$usage"
+                usage
                 exit 0
                 ;;
         esac
@@ -59,7 +59,7 @@ parse_options() {
     shift $((OPTIND - 1))
 
     if [ $# -lt 1 ]; then
-        echo "$usage"
+        usage
         exit 1
     fi
 
@@ -572,6 +572,7 @@ periodic_verification() {
 
 cleanup_temp_files() {
     [ -n "$EMAIL_QUEUE" ] && rm -f "$EMAIL_QUEUE"
+    return
 }
 
 ################################################################################
