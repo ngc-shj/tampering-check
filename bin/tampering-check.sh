@@ -2,16 +2,25 @@
 set -e
 
 ################################################################################
-# Configuration file location and default values
+# Global variables
 ################################################################################
 
+STATE_DIR="/var/lib/tampering-check"
+RUN_DIR="/run/tampering-check"
 CONFIG_FILE="/etc/tampering-check/config.yml"
+YQ_AVAILABLE=-1  # -1 means "not checked yet"; 0 means "not available"; 1 means "available"
+
+################################################################################
+# Configuration default values
+################################################################################
 
 DEFAULT_CHECK_INTERVAL=3600
 DEFAULT_STORAGE_MODE="text"       # Default to text storage
 DEFAULT_HASH_ALGORITHM="sha256"
 DEFAULT_ENABLE_ALERTS=true
 DEFAULT_RECURSIVE=true
+DEFAULT_IMPORTANCE="low"
+DEFAULT_ALERT_MATRIX="ignore"
 DEFAULT_SYSLOG_ENABLED=true
 DEFAULT_EMAIL_ENABLED=false
 DEFAULT_EMAIL_AGGREGATION_INTERVAL=5
@@ -37,7 +46,6 @@ usage() {
     echo "  -c CONFIG_FILE : specify custom configuration file path (optional)"
     echo "  WATCH_DIR      : directory to monitor"
 }
-
 
 ################################################################################
 # parse_options
@@ -109,27 +117,53 @@ map_to_syslog_priority() {
 }
 
 ################################################################################
+# is_yq_available
+#  - Checks global variable YQ_AVAILABLE. If unknown, runs command -v yq once.
+################################################################################
+is_yq_available() {
+    if [ "$YQ_AVAILABLE" -eq -1 ]; then
+        if command -v yq &>/dev/null; then
+            YQ_AVAILABLE=1
+        else
+            YQ_AVAILABLE=0
+        fi
+    fi
+
+    # Return 0 (false) if YQ_AVAILABLE=0, or 1 (true) if YQ_AVAILABLE=1
+    [ "$YQ_AVAILABLE" -eq 1 ]
+}
+
+################################################################################
 # parse_config
 # Reads a configuration key from CONFIG_FILE using yq. Falls back to default
 # values if yq is missing or the key is absent.
 ################################################################################
 
 parse_config() {
-    if ! command -v yq &> /dev/null; then
-        echo "Warning: yq not found, using default values" >&2
-        return 1
+    local key="$1"
+    local def="$2"
+
+    # 1) If yq not available, immediately return default
+    if ! is_yq_available; then
+        echo "$def"
+        return 0
     fi
-    if [ -f "$CONFIG_FILE" ]; then
-        local key="$1"
-        local value
-        value=$(yq -r "$key" "$CONFIG_FILE" 2>/dev/null)
-        if [ -z "$value" ] || [ "$value" = "null" ]; then
-            return 1
-        else
-            echo "$value"
-        fi
+
+    # 2) If the config file doesn't exist, return default
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "$def"
+        return 0
+    fi
+
+    # 3) Attempt to parse with yq
+    local val
+    val=$(yq -r "$key" "$CONFIG_FILE" 2>/dev/null)
+
+    # 4) If empty or "null", return default
+    if [ -z "$val" ] || [ "$val" = "null" ]; then
+        echo "$def"
     else
-        return 1
+        echo "$val"
     fi
 }
 
@@ -140,15 +174,6 @@ parse_config() {
 ################################################################################
 
 parse_alert_matrix() {
-    if ! command -v yq &> /dev/null; then
-        echo "Warning: yq not found, skipping parse_alert_matrix" >&2
-        return
-    fi
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo "No $CONFIG_FILE found, skipping parse_alert_matrix" >&2
-        return
-    fi
-
     # We can parse the set of importances and events dynamically if we like, or
     # we can define them statically. We'll define a small list for example:
     local importances=("critical" "high" "medium" "low" "ignore")
@@ -158,10 +183,7 @@ parse_alert_matrix() {
         for ev in "${events[@]}"; do
             local key=".alert_matrix.$imp.$ev"
             local val
-            val=$(yq -r "$key" "$CONFIG_FILE" 2>/dev/null || echo "")
-            if [ -z "$val" ] || [ "$val" = "null" ]; then
-                val="ignore"
-            fi
+            val=$(parse_config "$key" "$DEFAULT_ALERT_MATRIX")
             ALERT_MATRIX["$imp,$ev"]="$val"
         done
     done
@@ -178,7 +200,7 @@ get_alert_level_from_config() {
     local idx="$importance,$event_type"
     local level="${ALERT_MATRIX["$idx"]}"
     if [ -z "$level" ]; then
-        level="ignore"
+        level="$DEFAULT_ALERT_MATRIX"
     fi
     echo "$level"
 }
@@ -192,18 +214,18 @@ get_alert_level_from_config() {
 
 parse_directories_config() {
   local dir_count
-  dir_count=$(yq -r '.directories | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
+  dir_count=$(parse_config '.directories | length' 0)
   if [ "$dir_count" -gt 0 ]; then
       for i in $(seq 0 $((dir_count-1))); do
           local dir_path
-          dir_path=$(yq -r ".directories[$i].path" "$CONFIG_FILE" 2>/dev/null || echo "")
+          dir_path=$(parse_config ".directories[$i].path" "")
           [ -z "$dir_path" ] && continue
 
           local dir_recursive
-          dir_recursive=$(yq -r ".directories[$i].recursive" "$CONFIG_FILE" 2>/dev/null || echo "true")
+          dir_recursive=$(parse_config ".directories[$i].recursive" "$DEFAULT_RECURSIVE")
 
           local def_imp
-          def_imp=$(yq -r ".directories[$i].default_importance" "$CONFIG_FILE" 2>/dev/null || echo "low")
+          def_imp=$(parse_config ".directories[$i].default_importance" "$DEFAULT_IMPORTANCE")
 
           # If WATCH_DIR is a subpath of dir_path OR dir_path is a subpath of WATCH_DIR
           # We only store this entry if it is relevant. For instance, if WATCH_DIR = /etc
@@ -224,15 +246,15 @@ parse_directories_config() {
 
 parse_files_config() {
     local file_count
-    file_count=$(yq -r '.files | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
+    file_count=$(parse_config '.files | length' "$CONFIG_FILE" 0)
     if [ "$file_count" -gt 0 ]; then
         for i in $(seq 0 $((file_count-1))); do
             local fpath
-            fpath=$(yq -r ".files[$i].path" "$CONFIG_FILE" 2>/dev/null || echo "")
+            fpath=$(parse_config ".files[$i].path" "")
             [ -z "$fpath" ] && continue
 
             local fimp
-            fimp=$(yq -r ".files[$i].importance" "$CONFIG_FILE" 2>/dev/null || echo "low")
+            fimp=$(parse_config ".files[$i].importance" "$DEFAULT_IMPORTANCE")
 
             # We skip if the file is not under WATCH_DIR
             # e.g., if file is /var/log/syslog but WATCH_DIR=/etc
@@ -284,24 +306,24 @@ get_importance() {
 
 parse_main_config() {
     # These rely on parse_config() to fetch values from CONFIG_FILE
-    CHECK_INTERVAL=$(parse_config '.general.check_interval' || echo "$DEFAULT_CHECK_INTERVAL")
-    STORAGE_MODE=$(parse_config '.general.storage_mode' || echo "$DEFAULT_STORAGE_MODE")
-    HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' || echo "$DEFAULT_HASH_ALGORITHM")
-    ENABLE_ALERTS=$(parse_config '.general.enable_alerts' || echo "$DEFAULT_ENABLE_ALERTS")
+    CHECK_INTERVAL=$(parse_config '.general.check_interval' "$DEFAULT_CHECK_INTERVAL")
+    STORAGE_MODE=$(parse_config '.general.storage_mode' "$DEFAULT_STORAGE_MODE")
+    HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' "$DEFAULT_HASH_ALGORITHM")
+    ENABLE_ALERTS=$(parse_config '.general.enable_alerts' "$DEFAULT_ENABLE_ALERTS")
 
     parse_alert_matrix
     parse_directories_config
     parse_files_config
 
-    RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" || echo "$DEFAULT_RECURSIVE")
-    SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_SYSLOG_ENABLED")
-    EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
-    EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' || echo "")
-    EMAIL_MIN_PRIORITY=$(parse_config '.notifications.email.min_priority' || echo "$DEFAULT_EMAIL_MIN_PRIORITY")
-    EMAIL_AGGREGATION_INTERVAL=$(parse_config '.notifications.email.aggregation_interval' || echo "$DEFAULT_EMAIL_AGGREGATION_INTERVAL")
-    WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
-    LOG_LEVEL=$(parse_config '.logging.level' || echo "$DEFAULT_LOG_LEVEL")
-    LOG_FORMAT=$(parse_config '.logging.format' || echo "$DEFAULT_LOG_FORMAT")
+    RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" "$DEFAULT_RECURSIVE")
+    SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' "$DEFAULT_SYSLOG_ENABLED")
+    EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' "$DEFAULT_EMAIL_ENABLED")
+    EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' "")
+    EMAIL_MIN_PRIORITY=$(parse_config '.notifications.email.min_priority' "$DEFAULT_EMAIL_MIN_PRIORITY")
+    EMAIL_AGGREGATION_INTERVAL=$(parse_config '.notifications.email.aggregation_interval' "$DEFAULT_EMAIL_AGGREGATION_INTERVAL")
+    WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' "$DEFAULT_WEBHOOK_ENABLED")
+    LOG_LEVEL=$(parse_config '.logging.level' "$DEFAULT_LOG_LEVEL")
+    LOG_FORMAT=$(parse_config '.logging.format' "$DEFAULT_LOG_FORMAT")
 
     CHECK_INTERVAL=${CHECK_INTERVAL//[!0-9]/}
     if [ -z "$CHECK_INTERVAL" ] || [ "$CHECK_INTERVAL" -lt 1 ]; then
@@ -311,7 +333,6 @@ parse_main_config() {
     HASH_COMMAND="${HASH_ALGORITHM}sum"
     SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
 
-    STATE_DIR="/var/lib/tampering-check"
     if [ "$STORAGE_MODE" = "sqlite3" ]; then
         HASH_DB="${STATE_DIR}/${SERVICE_ID}_hashes.db"
         mkdir -p "$STATE_DIR"
@@ -323,7 +344,6 @@ parse_main_config() {
         chmod 640 "$HASH_FILE"
     fi
 
-    RUN_DIR="/run/tampering-check"
     mkdir -p "$RUN_DIR"
     LOCK_FILE="${RUN_DIR}/${SERVICE_ID}.lock"
 
