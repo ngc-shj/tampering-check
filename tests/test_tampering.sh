@@ -1,37 +1,40 @@
 #!/bin/bash
 set -e
 
-# Color definitions
+################################################################################
+# Color definitions (for test result output)
+################################################################################
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# To enable debug output, set the DEBUG_ENABLED environment variable (e.g., export DEBUG_ENABLED=1).
-# If DEBUG_ENABLED is not defined, debug output is suppressed.
-
-# Test directory and file settings
-TEST_DIR="/tmp/tampering-check-test"
-LOG_DIR="/var/log/tampering-check"
-# Align with tampering-check.sh SERVICE_ID generation (slashes replaced/removed)
-TEST_LOG_FILE="${LOG_DIR}/tmp_tampering-check-test.log"
-CONFIG_DIR="/etc/tampering-check"
-CONFIG_FILE="${CONFIG_DIR}/config.yml"
-PID_FILE="/tmp/tampering-check-test.pid"
-
-# Test result counters
-TESTS_TOTAL=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-
-# Print debug message with timestamp only if DEBUG_ENABLED is set
+################################################################################
+# For debug output
+################################################################################
 debug() {
     if [ -n "${DEBUG_ENABLED+x}" ]; then
         printf "[%s] DEBUG: %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1"
     fi
 }
 
+################################################################################
+# Test environment variables
+################################################################################
+TEST_DIR="/tmp/tampering-check-test"
+TEST_CONFIG_DIR="/tmp/tampering-check-test-config"
+TEST_CONFIG_FILE="${TEST_CONFIG_DIR}/test_config.yml"
+PID_FILE="/tmp/tampering-check-test.pid"
+
+LOGGER_TAG="tampering-check"
+
+TESTS_TOTAL=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+################################################################################
 # Print test result and update counters
+################################################################################
 print_result() {
     local test_name="$1"
     local result="$2"
@@ -45,30 +48,47 @@ print_result() {
     TESTS_FAILED=$((TESTS_FAILED + result))
 }
 
-# Set up the test environment
+################################################################################
+# Setup the test environment
+################################################################################
 setup() {
     debug "Setting up test environment"
-    sudo mkdir -p "$TEST_DIR" "$LOG_DIR" "$CONFIG_DIR"
-    sudo chmod 750 "$LOG_DIR" "$CONFIG_DIR"
-    sudo rm -f "$TEST_LOG_FILE"
-    sudo touch "$TEST_LOG_FILE"
-    sudo chmod 640 "$TEST_LOG_FILE"
+
+    # Create test directories (but do NOT touch /etc/tampering-check).
+    sudo mkdir -p "$TEST_DIR" "$TEST_CONFIG_DIR"
+    sudo rm -f "$PID_FILE"
+
     create_test_config
+
     debug "Test environment setup complete"
 }
 
-# Create the test configuration file
+################################################################################
+# Create a custom config file in /tmp rather than /etc/tampering-check
+################################################################################
 create_test_config() {
-    debug "Creating test configuration"
-    cat << 'EOF' | sudo tee "$CONFIG_FILE" > /dev/null
+    debug "Creating test configuration in $TEST_CONFIG_FILE"
+
+    # If already exists, remove and re-create (test environment only)
+    sudo rm -f "$TEST_CONFIG_FILE"
+
+    cat << 'EOF' | sudo tee "$TEST_CONFIG_FILE" > /dev/null
 general:
   check_interval: 5
   hash_algorithm: sha256
   enable_alerts: true
 
+alert_matrix:
+  medium:
+    create: "notice"
+    modify: "warning"
+    delete: "warning"
+    move:   "notice"
+
 directories:
   - path: /tmp/tampering-check-test
     recursive: true
+    default_importance: medium
 
 notifications:
   syslog:
@@ -78,23 +98,34 @@ notifications:
 logging:
   level: debug
 EOF
-    sudo chmod 640 "$CONFIG_FILE"
-    debug "Configuration file created at $CONFIG_FILE"
+
+    sudo chmod 640 "$TEST_CONFIG_FILE"
+    debug "Configuration file created at $TEST_CONFIG_FILE"
 }
 
-# Clean up the test environment
+################################################################################
+# Cleanup the test environment
+################################################################################
 cleanup() {
     debug "Cleaning up test environment..."
+
+    # Kill the tampering-check process if still running
     if [ -f "$PID_FILE" ]; then
+        local pid
         pid=$(cat "$PID_FILE")
         sudo kill -9 "$pid" 2>/dev/null || true
         rm -f "$PID_FILE"
     fi
-    sudo rm -rf "$TEST_DIR" "$TEST_LOG_FILE" "$CONFIG_FILE"
-    debug "Cleanup complete"
+
+    # Remove only our test directories in /tmp
+    sudo rm -rf "$TEST_DIR" "$TEST_CONFIG_DIR"
+
+    debug "Cleanup complete (did not remove /etc/tampering-check)"
 }
 
-# Check for required dependencies
+################################################################################
+# Dependency check
+################################################################################
 test_dependencies() {
     local result=0
     local missing=()
@@ -102,6 +133,7 @@ test_dependencies() {
     command -v inotifywait >/dev/null 2>&1 || missing+=("inotifywait")
     command -v sha256sum >/dev/null 2>&1 || missing+=("sha256sum")
     command -v yq >/dev/null 2>&1 || missing+=("yq")
+
     if [ ${#missing[@]} -gt 0 ]; then
         debug "Missing dependencies: ${missing[*]}"
         result=1
@@ -109,13 +141,19 @@ test_dependencies() {
     print_result "Dependency check" "$result"
 }
 
-# Wait for a specific log message with a timeout
-wait_for_log_message() {
+################################################################################
+# Wait for a log message in journald filtered by the logger tag
+################################################################################
+wait_for_journal_message() {
     local message="$1"
     local timeout="$2"
-    local start_time=$(date +%s)
+
+    local start_time
+    start_time=$(date +%s)
+
     while true; do
-        if sudo cat "$TEST_LOG_FILE" | sed 's/^[[:space:]]*//' | grep -q "$message"; then
+        # Check last 200 lines from journald for our LOGGER_TAG
+        if journalctl -n 200 -t "$LOGGER_TAG" | grep -q "$message"; then
             return 0
         fi
         if [ $(( $(date +%s) - start_time )) -ge "$timeout" ]; then
@@ -125,89 +163,105 @@ wait_for_log_message() {
     done
 }
 
-# Test the execution of tampering-check.sh
+################################################################################
+# Test script execution with custom config file
+################################################################################
 test_script_execution() {
     local result=0
-    debug "Testing script execution"
-    sudo rm -f "$TEST_LOG_FILE"
-    sudo touch "$TEST_LOG_FILE"
-    sudo chmod 640 "$TEST_LOG_FILE"
-    echo "test content" > "$TEST_DIR/test.txt"
+    debug "Testing script execution with -c $TEST_CONFIG_FILE"
+
+    # Create a test file in the monitored directory
+    echo "test content" | sudo tee "$TEST_DIR/test.txt" >/dev/null
     debug "Created test file: $TEST_DIR/test.txt"
+
+    # Start tampering-check.sh with -c pointing to our custom config
     debug "Starting tampering-check.sh"
-    sudo ./bin/tampering-check.sh "$TEST_DIR" > /dev/null 2>&1 &
+    sudo ./bin/tampering-check.sh -c "$TEST_CONFIG_FILE" "$TEST_DIR" >/dev/null 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
     debug "Started with PID: $pid"
-    debug "Waiting for initialization"
-    if ! wait_for_log_message "Starting file monitoring" 5; then
-        debug "Initialization failed, log content:"
-        sudo cat "$TEST_LOG_FILE" | sed 's/^[[:space:]]*//'
+
+    # Wait for "Starting file monitoring" message in journald
+    if ! wait_for_journal_message "Starting file monitoring for $TEST_DIR" 5; then
+        debug "Initialization failed (didn't see 'Starting file monitoring' in journald)"
         result=1
     else
-        debug "Successfully initialized"
+        debug "Detected start message"
         sleep 2
-        debug "Modifying test file"
-        echo "modified content" > "$TEST_DIR/test.txt"
-        debug "Waiting for modification detection"
-        if ! wait_for_log_message "File modified:" 3; then
-            debug "Modification detection failed, log content:"
-            sudo cat "$TEST_LOG_FILE" | sed 's/^[[:space:]]*//'
+
+        # Modify the file to see if tampering-check logs "File modified:"
+        echo "modified content" | sudo tee "$TEST_DIR/test.txt" >/dev/null
+        debug "Modified test file: $TEST_DIR/test.txt"
+
+        if ! wait_for_journal_message "File modif.*d: $TEST_DIR/test.txt" 5; then
+            debug "Modification detection failed (didn't see 'File modified' in journald)"
             result=1
         else
             debug "Modification detected successfully"
         fi
     fi
+
+    # Stop the process
     if [ -f "$PID_FILE" ]; then
         pid=$(cat "$PID_FILE")
-        if ps -p "$pid" > /dev/null; then
+        if ps -p "$pid" >/dev/null; then
             debug "Stopping process $pid"
             sudo kill "$pid"
             sleep 1
-            debug "Final log content:"
-            sudo cat "$TEST_LOG_FILE" | sed 's/^[[:space:]]*//'
         fi
         rm -f "$PID_FILE"
     fi
+
     print_result "Script execution" "$result"
 }
 
-# Test the systemd service file
+################################################################################
+# Test systemd service file syntax
+################################################################################
 test_systemd_service() {
     local result=0
     debug "Testing systemd service..."
+
     if ! systemd-analyze verify systemd/tampering-check@.service >/dev/null 2>&1; then
         debug "Invalid systemd service file"
         result=1
     else
         debug "Systemd service file verified successfully"
     fi
+
     print_result "Systemd service" "$result"
 }
 
-# Test hash calculation functionality
+################################################################################
+# Test hash calculation logic
+################################################################################
 test_hash_calculation() {
     local result=0
     local test_file="$TEST_DIR/hash_test.txt"
-    debug "Testing hash calculation..."
-    echo "test content" > "$test_file"
-    debug "Created hash test file: $test_file"
-    local hash1=$(sha256sum "$test_file" | cut -d' ' -f1)
-    debug "Initial hash: $hash1"
-    echo "modified content" > "$test_file"
-    debug "Modified hash test file"
-    local hash2=$(sha256sum "$test_file" | cut -d' ' -f1)
-    debug "New hash: $hash2"
+    debug "Testing hash calculation"
+
+    echo "test content" | sudo tee "$test_file" >/dev/null
+    debug "Created file: $test_file"
+    local hash1
+    hash1=$(sha256sum "$test_file" | cut -d' ' -f1)
+
+    echo "modified content" | sudo tee "$test_file" >/dev/null
+    debug "Modified file: $test_file"
+    local hash2
+    hash2=$(sha256sum "$test_file" | cut -d' ' -f1)
+
     if [ "$hash1" = "$hash2" ]; then
-        debug "Hash comparison failed: hashes match when they should differ"
+        debug "Hashes matched, but they should differ!"
         result=1
     else
-        debug "Hash comparison successful: hashes differ as expected"
+        debug "Hashes differ as expected"
     fi
     print_result "Hash calculation" "$result"
 }
 
-# Main test execution function
+################################################################################
+# Main test sequence
+################################################################################
 main() {
     debug "Starting tampering-check tests..."
     setup
@@ -231,4 +285,3 @@ fi
 
 trap cleanup EXIT
 main "$@"
-

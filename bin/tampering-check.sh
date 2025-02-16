@@ -29,6 +29,57 @@ declare -A FILES_MAP=()     # filePath => importance
 declare -A ALERT_MATRIX=()  # For reading an 'alert_matrix' from config.yml.
 
 ################################################################################
+# Usage
+################################################################################
+
+usage() {
+    echo "Usage: $0 [-c CONFIG_FILE] WATCH_DIR"
+    echo "  -c CONFIG_FILE : specify custom configuration file path (optional)"
+    echo "  WATCH_DIR      : directory to monitor"
+}
+
+
+################################################################################
+# parse_options
+# where we handle command-line arguments and set WATCH_DIR
+################################################################################
+parse_options() {
+    local usage="Usage: $0 [-c CONFIG_FILE] WATCH_DIR"
+    while getopts "c:h" opt; do
+        case "$opt" in
+            c)
+                CONFIG_FILE="$OPTARG"
+                ;;
+            h|\?)
+                echo "$usage"
+                exit 0
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+
+    if [ $# -lt 1 ]; then
+        echo "$usage"
+        exit 1
+    fi
+
+    # Convert underscores to slashes and prepend a leading slash
+    WATCH_DIR="/${1//_//}"
+
+    # Remove consecutive slashes by repeatedly replacing '//' with '/'
+    # until no more '//' remains in the string.
+    while [[ "$WATCH_DIR" == *"//"* ]]; do
+        WATCH_DIR="${WATCH_DIR//\/\//\/}"
+    done
+
+    if [ -z "$WATCH_DIR" ] || [ "$WATCH_DIR" = "/" ]; then
+        echo "Error: No target directory specified" >&2
+        exit 1
+    fi
+
+}
+
+################################################################################
 # Priority mapping: convert string to numeric for comparisons
 ################################################################################
 
@@ -231,59 +282,55 @@ get_importance() {
 # MAIN CONFIG PARSING
 ################################################################################
 
-CHECK_INTERVAL=$(parse_config '.general.check_interval' || echo "$DEFAULT_CHECK_INTERVAL")
-STORAGE_MODE=$(parse_config '.general.storage_mode' || echo "$DEFAULT_STORAGE_MODE")
-HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' || echo "$DEFAULT_HASH_ALGORITHM")
-ENABLE_ALERTS=$(parse_config '.general.enable_alerts' || echo "$DEFAULT_ENABLE_ALERTS")
+parse_main_config() {
+    # These rely on parse_config() to fetch values from CONFIG_FILE
+    CHECK_INTERVAL=$(parse_config '.general.check_interval' || echo "$DEFAULT_CHECK_INTERVAL")
+    STORAGE_MODE=$(parse_config '.general.storage_mode' || echo "$DEFAULT_STORAGE_MODE")
+    HASH_ALGORITHM=$(parse_config '.general.hash_algorithm' || echo "$DEFAULT_HASH_ALGORITHM")
+    ENABLE_ALERTS=$(parse_config '.general.enable_alerts' || echo "$DEFAULT_ENABLE_ALERTS")
 
-# We find the WATCH_DIR from command line
-WATCH_DIR="/${1//_//}"
-if [ -z "$WATCH_DIR" ]; then
-    echo "Error: No target directory specified" >&2
-    exit 1
-fi
+    parse_alert_matrix
+    parse_directories_config
+    parse_files_config
 
-parse_alert_matrix
-parse_directories_config
-parse_files_config
+    RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" || echo "$DEFAULT_RECURSIVE")
+    SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_SYSLOG_ENABLED")
+    EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
+    EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' || echo "")
+    EMAIL_MIN_PRIORITY=$(parse_config '.notifications.email.min_priority' || echo "$DEFAULT_EMAIL_MIN_PRIORITY")
+    EMAIL_AGGREGATION_INTERVAL=$(parse_config '.notifications.email.aggregation_interval' || echo "$DEFAULT_EMAIL_AGGREGATION_INTERVAL")
+    WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
+    LOG_LEVEL=$(parse_config '.logging.level' || echo "$DEFAULT_LOG_LEVEL")
+    LOG_FORMAT=$(parse_config '.logging.format' || echo "$DEFAULT_LOG_FORMAT")
 
-RECURSIVE=$(parse_config ".directories[] | select(.path == \"$WATCH_DIR\") | .recursive" || echo "$DEFAULT_RECURSIVE")
-SYSLOG_ENABLED=$(parse_config '.notifications.syslog.enabled' || echo "$DEFAULT_SYSLOG_ENABLED")
-EMAIL_ENABLED=$(parse_config '.notifications.email.enabled' || echo "$DEFAULT_EMAIL_ENABLED")
-EMAIL_RECIPIENT=$(parse_config '.notifications.email.recipient' || echo "")
-EMAIL_MIN_PRIORITY=$(parse_config '.notifications.email.min_priority' || echo "$DEFAULT_EMAIL_MIN_PRIORITY")
-EMAIL_AGGREGATION_INTERVAL=$(parse_config '.notifications.email.aggregation_interval' || echo "$DEFAULT_EMAIL_AGGREGATION_INTERVAL")
-WEBHOOK_ENABLED=$(parse_config '.notifications.webhook.enabled' || echo "$DEFAULT_WEBHOOK_ENABLED")
-LOG_LEVEL=$(parse_config '.logging.level' || echo "$DEFAULT_LOG_LEVEL")
-LOG_FORMAT=$(parse_config '.logging.format' || echo "$DEFAULT_LOG_FORMAT")
+    CHECK_INTERVAL=${CHECK_INTERVAL//[!0-9]/}
+    if [ -z "$CHECK_INTERVAL" ] || [ "$CHECK_INTERVAL" -lt 1 ]; then
+        CHECK_INTERVAL=$DEFAULT_CHECK_INTERVAL
+    fi
 
-CHECK_INTERVAL=${CHECK_INTERVAL//[!0-9]/}
-if [ -z "$CHECK_INTERVAL" ] || [ "$CHECK_INTERVAL" -lt 1 ]; then
-    CHECK_INTERVAL=$DEFAULT_CHECK_INTERVAL
-fi
+    HASH_COMMAND="${HASH_ALGORITHM}sum"
+    SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
 
-HASH_COMMAND="${HASH_ALGORITHM}sum"
-SERVICE_ID=$(echo "$WATCH_DIR" | sed 's#^/##' | tr '/' '_')
+    STATE_DIR="/var/lib/tampering-check"
+    if [ "$STORAGE_MODE" = "sqlite3" ]; then
+        HASH_DB="${STATE_DIR}/${SERVICE_ID}_hashes.db"
+        mkdir -p "$STATE_DIR"
+        sqlite3 "$HASH_DB" "CREATE TABLE IF NOT EXISTS hashes (path TEXT PRIMARY KEY, hash TEXT NOT NULL);"
+    else
+        HASH_FILE="${STATE_DIR}/${SERVICE_ID}_hashes.txt"
+        mkdir -p "$STATE_DIR"
+        touch "$HASH_FILE"
+        chmod 640 "$HASH_FILE"
+    fi
 
-STATE_DIR="/var/lib/tampering-check"
-if [ "$STORAGE_MODE" = "sqlite3" ]; then
-    HASH_DB="${STATE_DIR}/${SERVICE_ID}_hashes.db"
-    mkdir -p "$STATE_DIR"
-    sqlite3 "$HASH_DB" "CREATE TABLE IF NOT EXISTS hashes (path TEXT PRIMARY KEY, hash TEXT NOT NULL);"
-else
-    HASH_FILE="${STATE_DIR}/${SERVICE_ID}_hashes.txt"
-    mkdir -p "$STATE_DIR"
-    touch "$HASH_FILE"
-    chmod 640 "$HASH_FILE"
-fi
+    RUN_DIR="/run/tampering-check"
+    mkdir -p "$RUN_DIR"
+    LOCK_FILE="${RUN_DIR}/${SERVICE_ID}.lock"
 
-RUN_DIR="/run/tampering-check"
-mkdir -p "$RUN_DIR"
-LOCK_FILE="${RUN_DIR}/${SERVICE_ID}.lock"
+    EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
 
-EMAIL_QUEUE=$(mktemp /tmp/tampering_check_email_queue.XXXXXX)
-
-echo "Using hash algorithm: ${HASH_COMMAND}" >&2
+    echo "Using hash algorithm: ${HASH_COMMAND}" >&2
+}
 
 ################################################################################
 # LOGGING AND NOTIFICATION
@@ -536,11 +583,13 @@ trap 'send_notification "Service terminated: $WATCH_DIR" "alert"; exit' INT TERM
 trap cleanup_temp_files EXIT
 
 main() {
+    parse_options "$@"
+    parse_main_config
     calculate_initial_hashes
     periodic_verification &
     send_queued_emails &
     monitor_changes
 }
 
-main
+main "$@"
 
