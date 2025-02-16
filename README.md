@@ -49,9 +49,15 @@ Also ensure `jq` is installed (`sudo apt-get install jq` on Debian/Ubuntu, etc.)
      sudo pip install yq
      ```
 
-   - **RHEL/CentOS**:
+   - **RHEL 7,8/CentOS 7,8**:
      ```bash
-     sudo dnf install inotify-tools jq mailx curl sqlite3
+     sudo dnf install inotify-tools jq mailx curl sqlite
+     sudo pip install yq
+     ```
+
+   - **RHEL 9/Rocky Linux 9**:
+     ```bash
+     sudo dnf install inotify-tools jq s-nail curl sqlite
      sudo pip install yq
      ```
 
