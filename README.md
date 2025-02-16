@@ -70,7 +70,7 @@ The main configuration file is `/etc/tampering-check/config.yml`. A sample file 
 
 ```yaml
 general:
-  check_interval: 300            # Interval (seconds) for periodic re-check
+  check_interval: 3600           # Interval (seconds) for periodic re-check
   storage_mode: sqlite3          # Either "text" or "sqlite3"
   hash_algorithm: sha256         # e.g., "sha256sum"
   enable_alerts: true            # Globally enable or disable alerts
