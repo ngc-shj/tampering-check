@@ -148,7 +148,7 @@ logging:
 
 - **`alert_matrix`**: Defines how each importance level (e.g. `critical`, `high`, etc.) reacts to file events (`create`, `modify`, `delete`, `move`).
 - **`directories`**: Each entry specifies a path, whether subdirectories are included (`recursive`), and a `default_importance` to assign if no file entry overrides it.
-- **`files`**: Specific file paths override the directory’s default importance. 
+- **`files`**: Specific file paths override the directory's default importance. 
   - Valid `importance` values: `critical`, `high`, `medium`, `low`, `ignore`.
 - **`notifications.email.min_priority`**: Only events at or above this level (e.g. `notice`, `warning`, `alert`, `critical`) will be emailed.
 
